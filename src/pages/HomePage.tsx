@@ -25,7 +25,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onStartWithUploa
     <div className="bg-white">
       {/* Hero Section */}
       <section className="max-w-7xl mx-auto px-4 sm:px-6 pt-10 pb-16 lg:pt-14 lg:pb-20">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-stretch">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-10 items-center">
           <div className="lg:col-span-6 flex flex-col justify-center">
             <p className="text-xs font-semibold text-indigo-600 tracking-wide mb-3">
               Turn Pixels Into Perfect Vectors
@@ -58,37 +58,29 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onStartWithUploa
               </button>
             </div>
 
-            <UploadDropzone
-              onUploaded={(meta) => onStartWithUpload(meta, '/vectorizer')}
-              title="Drop an image to vectorize right now"
-              subtitle="PNG, JPG, JPEG, WebP, BMP, GIF · Drag & drop or paste (Ctrl+V)"
-            />
+            <div className="pt-6 border-t border-slate-200 grid grid-cols-3 gap-4 text-left">
+              <div>
+                <div className="text-lg font-bold font-mono tabular-nums text-slate-900">SVG · PDF</div>
+                <div className="text-xs text-slate-500">EPS & CAD DXF exports</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold font-mono tabular-nums text-slate-900">Up to 4X</div>
+                <div className="text-xs text-slate-500">Detail-preserving upscale</div>
+              </div>
+              <div>
+                <div className="text-lg font-bold font-mono tabular-nums text-slate-900">7 Presets</div>
+                <div className="text-xs text-slate-500">Logos to laser CNC</div>
+              </div>
+            </div>
           </div>
 
           <div className="lg:col-span-6 flex flex-col">
-            <div className="flex-1 rounded-xl border border-slate-200 bg-slate-50 overflow-hidden shadow-sm flex flex-col">
-              <div className="relative flex-1 min-h-[320px] bg-slate-100">
-                <img
-                  src="/src/assets/images/hero_studio_showcase_1795651606887.jpg"
-                  alt="MakeVectorizer precision Bezier vector workstation"
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
-              </div>
-              <div className="p-5 bg-white border-t border-slate-200 grid grid-cols-3 gap-4 text-left">
-                <div>
-                  <div className="text-lg font-bold font-mono tabular-nums text-slate-900">SVG · PDF</div>
-                  <div className="text-xs text-slate-500">EPS & CAD DXF exports</div>
-                </div>
-                <div>
-                  <div className="text-lg font-bold font-mono tabular-nums text-slate-900">Up to 4X</div>
-                  <div className="text-xs text-slate-500">Detail-preserving upscale</div>
-                </div>
-                <div>
-                  <div className="text-lg font-bold font-mono tabular-nums text-slate-900">7 Presets</div>
-                  <div className="text-xs text-slate-500">Logos to laser CNC</div>
-                </div>
-              </div>
+            <div className="rounded-xl border border-slate-200 bg-white p-5 sm:p-6 shadow-sm">
+              <UploadDropzone
+                onUploaded={(meta) => onStartWithUpload(meta, '/vectorizer')}
+                title="Drop an image to vectorize right now"
+                subtitle="PNG, JPG, JPEG, WebP, BMP, GIF · Drag & drop or paste (Ctrl+V)"
+              />
             </div>
           </div>
         </div>
@@ -126,21 +118,15 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onStartWithUploa
                   Topological contour tracing extracts closed outer paths and cutout holes with smooth Catmull-Rom cubic Bezier curves—zero overlapping blobs, zero gaps between adjacent colors, and zero embedded raster fakes.
                 </p>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center pt-4 border-t border-slate-100">
-                <div className="aspect-square max-h-48 rounded-lg border border-slate-200 overflow-hidden bg-white">
-                  <img
-                    src="/src/assets/images/sample_brand_emblem_1795651607372.jpg"
-                    alt="Geometric origami brand emblem ready for vectorization"
-                    referrerPolicy="no-referrer"
-                    className="w-full h-full object-contain"
-                  />
-                </div>
-                <div className="space-y-2 text-xs text-slate-600">
-                  <div className="font-semibold text-slate-900">7 Specialized Presets</div>
-                  <div>Logo & Branding · Illustration</div>
-                  <div>Photography · Sketch & Line Art</div>
-                  <div>Screen Printing · Laser & CNC</div>
-                  <div>Text & Typography</div>
+              <div className="pt-4 border-t border-slate-100 space-y-3">
+                <div className="text-xs font-semibold text-slate-900">7 Specialized Presets</div>
+                <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs text-slate-600">
+                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 font-medium text-slate-800">Logo & Branding</div>
+                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 font-medium text-slate-800">Illustration</div>
+                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 font-medium text-slate-800">Photography</div>
+                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 font-medium text-slate-800">Sketch & Line Art</div>
+                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 font-medium text-slate-800">Screen Printing</div>
+                  <div className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 font-medium text-slate-800">Laser & CNC · Type</div>
                 </div>
               </div>
             </div>
@@ -160,17 +146,23 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onStartWithUploa
                     Open Upscaler →
                   </button>
                 </div>
-                <p className="text-sm text-slate-600 leading-relaxed mb-5">
+                <p className="text-sm text-slate-600 leading-relaxed mb-6">
                   Upscale 2X, 3X, or 4X with edge enhancement, noise reduction, and transparency preservation—then vectorize the crisp upscaled result in one click.
                 </p>
               </div>
-              <div className="aspect-4/3 rounded-lg border border-slate-200 overflow-hidden bg-slate-100">
-                <img
-                  src="/src/assets/images/sample_product_watch_1795651607350.jpg"
-                  alt="Studio chronograph wristwatch sample for 4X upscaling"
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
+              <div className="pt-4 border-t border-slate-100 grid grid-cols-1 gap-2 text-xs text-slate-700">
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-medium text-slate-800">Scale Factors</span>
+                  <span className="font-mono text-indigo-600 font-semibold">2X · 3X · 4X</span>
+                </div>
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-medium text-slate-800">Detail & Edge Recovery</span>
+                  <span className="font-mono text-slate-600">Lanczos3 + Sharpen</span>
+                </div>
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-medium text-slate-800">Alpha Channel</span>
+                  <span className="font-mono text-slate-600">Preserved</span>
+                </div>
               </div>
             </div>
 
@@ -189,17 +181,23 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onStartWithUploa
                     Remove BG →
                   </button>
                 </div>
-                <p className="text-sm text-slate-600 leading-relaxed mb-5">
+                <p className="text-sm text-slate-600 leading-relaxed mb-6">
                   Automatic border saliency detection plus manual foreground/background brush hints, edge refinement, feathering, and transparent PNG or solid backdrop export.
                 </p>
               </div>
-              <div className="aspect-4/3 rounded-lg border border-slate-200 overflow-hidden bg-white">
-                <img
-                  src="/src/assets/images/sample_botanical_illustration_1795651607300.jpg"
-                  alt="Botanical toucan illustration sample for background removal and multi-color vectorization"
-                  referrerPolicy="no-referrer"
-                  className="w-full h-full object-cover"
-                />
+              <div className="pt-4 border-t border-slate-100 grid grid-cols-1 gap-2 text-xs text-slate-700">
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-medium text-slate-800">Subject Detection</span>
+                  <span className="font-mono text-indigo-600 font-semibold">Auto + Seeds</span>
+                </div>
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-medium text-slate-800">Edge Refinement</span>
+                  <span className="font-mono text-slate-600">Alpha Matting</span>
+                </div>
+                <div className="flex items-center justify-between px-3 py-2 rounded-lg bg-slate-50 border border-slate-200">
+                  <span className="font-medium text-slate-800">Output Backdrop</span>
+                  <span className="font-mono text-slate-600">PNG · White · Custom</span>
+                </div>
               </div>
             </div>
 
