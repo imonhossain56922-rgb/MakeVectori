@@ -1,0 +1,210 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user account and subscription plan profile.",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "format": "email", "maxLength": 254 },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 100 },
+        "photoURL": { "type": "string", "maxLength": 512 },
+        "plan": { "type": "string", "enum": ["free", "pro", "business"] },
+        "dailyConversionsUsed": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "email", "displayName", "plan", "dailyConversionsUsed", "createdAt", "updatedAt"]
+    },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "User workspace preferences and default export/vectorization settings.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "defaultPreset": { "type": "string", "enum": ["logo", "illustration", "photography", "sketch", "screenprint", "cnc", "typography"] },
+        "defaultExportFormat": { "type": "string", "enum": ["svg", "pdf", "eps", "dxf", "png"] },
+        "defaultUpscaleFactor": { "type": "number" },
+        "showGrid": { "type": "boolean" },
+        "showRulers": { "type": "boolean" },
+        "checkerboardBg": { "type": "boolean" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "defaultPreset", "defaultExportFormat", "defaultUpscaleFactor", "showGrid", "showRulers", "checkerboardBg", "updatedAt"]
+    },
+    "Project": {
+      "title": "Project",
+      "description": "A MakeVectorizer studio project containing vector or enhancement work.",
+      "type": "object",
+      "properties": {
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "folder": { "type": "string", "maxLength": 80 },
+        "kind": { "type": "string", "enum": ["vector", "upscale", "background-removal"] },
+        "status": { "type": "string", "enum": ["draft", "processing", "completed", "failed"] },
+        "sourceUploadId": { "type": "string", "maxLength": 128 },
+        "latestResultId": { "type": "string", "maxLength": 128 },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "shapeCount": { "type": "number" },
+        "colorCount": { "type": "number" },
+        "thumbnailDataUrl": { "type": "string", "maxLength": 200000 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["projectId", "userId", "name", "folder", "kind", "status", "createdAt", "updatedAt"]
+    },
+    "UploadRecord": {
+      "title": "UploadRecord",
+      "description": "Metadata for a validated uploaded raster image.",
+      "type": "object",
+      "properties": {
+        "uploadId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "filename": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "mimeType": { "type": "string", "enum": ["image/png", "image/jpeg", "image/webp", "image/bmp", "image/gif"] },
+        "byteSize": { "type": "number" },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "storagePath": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uploadId", "userId", "projectId", "filename", "mimeType", "byteSize", "width", "height", "storagePath", "createdAt"]
+    },
+    "ProcessingJob": {
+      "title": "ProcessingJob",
+      "description": "Tracked server processing job for vectorization, upscaling, or background removal.",
+      "type": "object",
+      "properties": {
+        "jobId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "jobType": { "type": "string", "enum": ["vectorize", "upscale", "remove-background"] },
+        "status": { "type": "string", "enum": ["waiting", "processing", "completed", "failed", "cancelled"] },
+        "stage": { "type": "string", "maxLength": 80 },
+        "progress": { "type": "number" },
+        "settingsSummary": { "type": "string", "maxLength": 500 },
+        "errorMessage": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["jobId", "userId", "projectId", "jobType", "status", "stage", "progress", "createdAt", "updatedAt"]
+    },
+    "VectorResult": {
+      "title": "VectorResult",
+      "description": "Persisted vectorization output metadata and editable SVG payload.",
+      "type": "object",
+      "properties": {
+        "resultId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "preset": { "type": "string", "maxLength": 40 },
+        "width": { "type": "number" },
+        "height": { "type": "number" },
+        "shapeCount": { "type": "number" },
+        "nodeCount": { "type": "number" },
+        "paletteColors": { "type": "string", "maxLength": 2000 },
+        "svgContent": { "type": "string", "maxLength": 700000 },
+        "storagePath": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["resultId", "userId", "projectId", "preset", "width", "height", "shapeCount", "nodeCount", "storagePath", "createdAt", "updatedAt"]
+    },
+    "UpscaleResult": {
+      "title": "UpscaleResult",
+      "description": "Persisted 2X/3X/4X upscaling or background-removal result metadata.",
+      "type": "object",
+      "properties": {
+        "resultId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "scaleFactor": { "type": "number" },
+        "preset": { "type": "string", "maxLength": 40 },
+        "engine": { "type": "string", "maxLength": 120 },
+        "originalWidth": { "type": "number" },
+        "originalHeight": { "type": "number" },
+        "outputWidth": { "type": "number" },
+        "outputHeight": { "type": "number" },
+        "storagePath": { "type": "string", "maxLength": 300 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["resultId", "userId", "projectId", "scaleFactor", "preset", "engine", "originalWidth", "originalHeight", "outputWidth", "outputHeight", "storagePath", "createdAt"]
+    },
+    "DownloadHistoryEntry": {
+      "title": "DownloadHistoryEntry",
+      "description": "Audit log of user exports and downloads.",
+      "type": "object",
+      "properties": {
+        "downloadId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "projectId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "projectName": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "format": { "type": "string", "enum": ["svg", "pdf", "eps", "dxf", "png", "jpg", "webp", "zip"] },
+        "byteSize": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["downloadId", "userId", "projectId", "projectName", "format", "byteSize", "createdAt"]
+    },
+    "FontSearchRecord": {
+      "title": "FontSearchRecord",
+      "description": "Per-user AI Font Finder search result history entry.",
+      "type": "object",
+      "properties": {
+        "searchId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "userId": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "filename": { "type": "string", "minLength": 1, "maxLength": 180 },
+        "extractedText": { "type": "string", "minLength": 1, "maxLength": 500 },
+        "matchedFontFamily": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "matchedFontId": { "type": "string", "maxLength": 120 },
+        "isExactMatch": { "type": "boolean" },
+        "confidencePercent": { "type": "number" },
+        "licenseClass": { "type": "string", "maxLength": 80 },
+        "regionCount": { "type": "number" },
+        "thumbnailDataUrl": { "type": "string", "maxLength": 200000 },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["searchId", "userId", "filename", "extractedText", "matchedFontFamily", "isExactMatch", "confidencePercent", "licenseClass", "regionCount", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user account and plan document."
+    },
+    "/userSettings/{userId}": {
+      "schema": { "$ref": "#/entities/UserSettings" },
+      "description": "Per-user editor and processing defaults."
+    },
+    "/projects/{projectId}": {
+      "schema": { "$ref": "#/entities/Project" },
+      "description": "User-owned vectorization, upscaling, and background-removal projects."
+    },
+    "/uploads/{uploadId}": {
+      "schema": { "$ref": "#/entities/UploadRecord" },
+      "description": "Uploaded source image records owned by a user and linked to a project."
+    },
+    "/processingJobs/{jobId}": {
+      "schema": { "$ref": "#/entities/ProcessingJob" },
+      "description": "Server processing job records linked to a user project."
+    },
+    "/vectorResults/{resultId}": {
+      "schema": { "$ref": "#/entities/VectorResult" },
+      "description": "Vectorization outputs linked to a user project."
+    },
+    "/upscaleResults/{resultId}": {
+      "schema": { "$ref": "#/entities/UpscaleResult" },
+      "description": "Upscaling and background-removal outputs linked to a user project."
+    },
+    "/downloadHistory/{downloadId}": {
+      "schema": { "$ref": "#/entities/DownloadHistoryEntry" },
+      "description": "Immutable export download log owned by the user."
+    },
+    "/fontSearches/{searchId}": {
+      "schema": { "$ref": "#/entities/FontSearchRecord" },
+      "description": "Per-user AI Font Finder recognition history."
+    }
+  }
+}

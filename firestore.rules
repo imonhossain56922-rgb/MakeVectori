@@ -1,0 +1,365 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default-Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Core Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isVerifiedOwner(userId) {
+      return isEmailVerified() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function projectOwnedByCaller(projectId) {
+      return isValidId(projectId)
+        && exists(/databases/$(database)/documents/projects/$(projectId))
+        && get(/databases/$(database)/documents/projects/$(projectId)).data.userId == request.auth.uid;
+    }
+
+    // Validation Helpers (Anti-Update-Gap)
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'plan', 'dailyConversionsUsed', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'displayName', 'photoURL', 'plan', 'dailyConversionsUsed', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == request.auth.uid
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 254
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && data.plan in ['free', 'pro', 'business']
+        && data.dailyConversionsUsed is number && data.dailyConversionsUsed >= 0 && data.dailyConversionsUsed <= 100000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserSettings(data) {
+      return data.keys().hasAll(['userId', 'defaultPreset', 'defaultExportFormat', 'defaultUpscaleFactor', 'showGrid', 'showRulers', 'checkerboardBg', 'updatedAt'])
+        && data.keys().hasOnly(['userId', 'defaultPreset', 'defaultExportFormat', 'defaultUpscaleFactor', 'showGrid', 'showRulers', 'checkerboardBg', 'updatedAt'])
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.defaultPreset in ['logo', 'illustration', 'photography', 'sketch', 'screenprint', 'cnc', 'typography']
+        && data.defaultExportFormat in ['svg', 'pdf', 'eps', 'dxf', 'png']
+        && data.defaultUpscaleFactor is number && data.defaultUpscaleFactor in [1, 2, 3, 4]
+        && data.showGrid is bool
+        && data.showRulers is bool
+        && data.checkerboardBg is bool
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidProject(data) {
+      return data.keys().hasAll(['projectId', 'userId', 'name', 'folder', 'kind', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['projectId', 'userId', 'name', 'folder', 'kind', 'status', 'sourceUploadId', 'latestResultId', 'width', 'height', 'shapeCount', 'colorCount', 'thumbnailDataUrl', 'createdAt', 'updatedAt'])
+        && isValidId(data.projectId)
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 120
+        && data.folder is string && data.folder.size() >= 0 && data.folder.size() <= 80
+        && data.kind in ['vector', 'upscale', 'background-removal']
+        && data.status in ['draft', 'processing', 'completed', 'failed']
+        && (!('sourceUploadId' in data) || (data.sourceUploadId is string && data.sourceUploadId.size() <= 128))
+        && (!('latestResultId' in data) || (data.latestResultId is string && data.latestResultId.size() <= 128))
+        && (!('width' in data) || (data.width is number && data.width >= 0 && data.width <= 50000))
+        && (!('height' in data) || (data.height is number && data.height >= 0 && data.height <= 50000))
+        && (!('shapeCount' in data) || (data.shapeCount is number && data.shapeCount >= 0 && data.shapeCount <= 500000))
+        && (!('colorCount' in data) || (data.colorCount is number && data.colorCount >= 0 && data.colorCount <= 1024))
+        && (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 200000))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUpload(data) {
+      return data.keys().hasAll(['uploadId', 'userId', 'projectId', 'filename', 'mimeType', 'byteSize', 'width', 'height', 'storagePath', 'createdAt'])
+        && data.keys().hasOnly(['uploadId', 'userId', 'projectId', 'filename', 'mimeType', 'byteSize', 'width', 'height', 'storagePath', 'createdAt'])
+        && isValidId(data.uploadId)
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && isValidId(data.projectId)
+        && data.filename is string && data.filename.size() >= 1 && data.filename.size() <= 180
+        && data.mimeType in ['image/png', 'image/jpeg', 'image/webp', 'image/bmp', 'image/gif']
+        && data.byteSize is number && data.byteSize > 0 && data.byteSize <= 52428800
+        && data.width is number && data.width > 0 && data.width <= 25000
+        && data.height is number && data.height > 0 && data.height <= 25000
+        && data.storagePath is string && data.storagePath.size() >= 1 && data.storagePath.size() <= 300
+        && data.createdAt is timestamp;
+    }
+
+    function isValidProcessingJob(data) {
+      return data.keys().hasAll(['jobId', 'userId', 'projectId', 'jobType', 'status', 'stage', 'progress', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['jobId', 'userId', 'projectId', 'jobType', 'status', 'stage', 'progress', 'settingsSummary', 'errorMessage', 'createdAt', 'updatedAt'])
+        && isValidId(data.jobId)
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && isValidId(data.projectId)
+        && data.jobType in ['vectorize', 'upscale', 'remove-background']
+        && data.status in ['waiting', 'processing', 'completed', 'failed', 'cancelled']
+        && data.stage is string && data.stage.size() >= 1 && data.stage.size() <= 80
+        && data.progress is number && data.progress >= 0 && data.progress <= 100
+        && (!('settingsSummary' in data) || (data.settingsSummary is string && data.settingsSummary.size() <= 500))
+        && (!('errorMessage' in data) || (data.errorMessage is string && data.errorMessage.size() <= 300))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidVectorResult(data) {
+      return data.keys().hasAll(['resultId', 'userId', 'projectId', 'preset', 'width', 'height', 'shapeCount', 'nodeCount', 'storagePath', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['resultId', 'userId', 'projectId', 'preset', 'width', 'height', 'shapeCount', 'nodeCount', 'paletteColors', 'svgContent', 'storagePath', 'createdAt', 'updatedAt'])
+        && isValidId(data.resultId)
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && isValidId(data.projectId)
+        && data.preset is string && data.preset.size() >= 1 && data.preset.size() <= 40
+        && data.width is number && data.width > 0 && data.width <= 50000
+        && data.height is number && data.height > 0 && data.height <= 50000
+        && data.shapeCount is number && data.shapeCount >= 0 && data.shapeCount <= 500000
+        && data.nodeCount is number && data.nodeCount >= 0 && data.nodeCount <= 5000000
+        && (!('paletteColors' in data) || (data.paletteColors is string && data.paletteColors.size() <= 2000))
+        && (!('svgContent' in data) || (data.svgContent is string && data.svgContent.size() <= 700000))
+        && data.storagePath is string && data.storagePath.size() >= 1 && data.storagePath.size() <= 300
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUpscaleResult(data) {
+      return data.keys().hasAll(['resultId', 'userId', 'projectId', 'scaleFactor', 'preset', 'engine', 'originalWidth', 'originalHeight', 'outputWidth', 'outputHeight', 'storagePath', 'createdAt'])
+        && data.keys().hasOnly(['resultId', 'userId', 'projectId', 'scaleFactor', 'preset', 'engine', 'originalWidth', 'originalHeight', 'outputWidth', 'outputHeight', 'storagePath', 'createdAt'])
+        && isValidId(data.resultId)
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && isValidId(data.projectId)
+        && data.scaleFactor is number && data.scaleFactor in [1, 2, 3, 4]
+        && data.preset is string && data.preset.size() >= 1 && data.preset.size() <= 40
+        && data.engine is string && data.engine.size() >= 1 && data.engine.size() <= 120
+        && data.originalWidth is number && data.originalWidth > 0 && data.originalWidth <= 25000
+        && data.originalHeight is number && data.originalHeight > 0 && data.originalHeight <= 25000
+        && data.outputWidth is number && data.outputWidth > 0 && data.outputWidth <= 50000
+        && data.outputHeight is number && data.outputHeight > 0 && data.outputHeight <= 50000
+        && data.storagePath is string && data.storagePath.size() >= 1 && data.storagePath.size() <= 300
+        && data.createdAt is timestamp;
+    }
+
+    function isValidDownloadHistory(data) {
+      return data.keys().hasAll(['downloadId', 'userId', 'projectId', 'projectName', 'format', 'byteSize', 'createdAt'])
+        && data.keys().hasOnly(['downloadId', 'userId', 'projectId', 'projectName', 'format', 'byteSize', 'createdAt'])
+        && isValidId(data.downloadId)
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && isValidId(data.projectId)
+        && data.projectName is string && data.projectName.size() >= 1 && data.projectName.size() <= 120
+        && data.format in ['svg', 'pdf', 'eps', 'dxf', 'png', 'jpg', 'webp', 'zip']
+        && data.byteSize is number && data.byteSize >= 0 && data.byteSize <= 200000000
+        && data.createdAt is timestamp;
+    }
+
+    function isValidFontSearch(data) {
+      return data.keys().hasAll(['searchId', 'userId', 'filename', 'extractedText', 'matchedFontFamily', 'isExactMatch', 'confidencePercent', 'licenseClass', 'regionCount', 'createdAt'])
+        && data.keys().hasOnly(['searchId', 'userId', 'filename', 'extractedText', 'matchedFontFamily', 'matchedFontId', 'isExactMatch', 'confidencePercent', 'licenseClass', 'regionCount', 'thumbnailDataUrl', 'createdAt'])
+        && isValidId(data.searchId)
+        && isValidId(data.userId)
+        && data.userId == request.auth.uid
+        && data.filename is string && data.filename.size() >= 1 && data.filename.size() <= 180
+        && data.extractedText is string && data.extractedText.size() >= 1 && data.extractedText.size() <= 500
+        && data.matchedFontFamily is string && data.matchedFontFamily.size() >= 1 && data.matchedFontFamily.size() <= 120
+        && (!('matchedFontId' in data) || (data.matchedFontId is string && data.matchedFontId.size() <= 120))
+        && data.isExactMatch is bool
+        && data.confidencePercent is number && data.confidencePercent >= 0 && data.confidencePercent <= 100
+        && data.licenseClass is string && data.licenseClass.size() >= 1 && data.licenseClass.size() <= 80
+        && data.regionCount is number && data.regionCount >= 1 && data.regionCount <= 20
+        && (!('thumbnailDataUrl' in data) || (data.thumbnailDataUrl is string && data.thumbnailDataUrl.size() <= 200000))
+        && data.createdAt is timestamp;
+    }
+
+    // Users Collection (Strict PII Isolation: owner get only, list disabled)
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isVerifiedOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == userId
+        && incoming().plan == 'free'
+        && incoming().dailyConversionsUsed == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isVerifiedOwner(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().plan == existing().plan
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'dailyConversionsUsed', 'updatedAt']);
+      allow delete: if false;
+    }
+
+    // User Settings Collection
+    match /userSettings/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if false;
+      allow create: if isValidId(userId)
+        && isVerifiedOwner(userId)
+        && isValidUserSettings(incoming())
+        && incoming().userId == userId
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isVerifiedOwner(userId)
+        && isValidUserSettings(incoming())
+        && incoming().userId == existing().userId
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['defaultPreset', 'defaultExportFormat', 'defaultUpscaleFactor', 'showGrid', 'showRulers', 'checkerboardBg', 'updatedAt']);
+      allow delete: if isValidId(userId) && isVerifiedOwner(userId);
+    }
+
+    // Projects Collection
+    match /projects/{projectId} {
+      allow get: if isValidId(projectId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(projectId)
+        && isEmailVerified()
+        && isValidProject(incoming())
+        && incoming().projectId == projectId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(projectId)
+        && isEmailVerified()
+        && existing().userId == request.auth.uid
+        && isValidProject(incoming())
+        && incoming().projectId == existing().projectId
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'folder', 'status', 'sourceUploadId', 'latestResultId', 'width', 'height', 'shapeCount', 'colorCount', 'thumbnailDataUrl', 'updatedAt']);
+      allow delete: if isValidId(projectId) && isEmailVerified() && existing().userId == request.auth.uid;
+    }
+
+    // Uploads Collection
+    match /uploads/{uploadId} {
+      allow get: if isValidId(uploadId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(uploadId)
+        && isEmailVerified()
+        && isValidUpload(incoming())
+        && incoming().uploadId == uploadId
+        && incoming().createdAt == request.time
+        && projectOwnedByCaller(incoming().projectId);
+      allow update: if false;
+      allow delete: if isValidId(uploadId) && isEmailVerified() && existing().userId == request.auth.uid;
+    }
+
+    // Processing Jobs Collection
+    match /processingJobs/{jobId} {
+      allow get: if isValidId(jobId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(jobId)
+        && isEmailVerified()
+        && isValidProcessingJob(incoming())
+        && incoming().jobId == jobId
+        && incoming().status in ['waiting', 'processing']
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && projectOwnedByCaller(incoming().projectId);
+      allow update: if isValidId(jobId)
+        && isEmailVerified()
+        && existing().userId == request.auth.uid
+        && !(existing().status in ['completed', 'failed', 'cancelled'])
+        && isValidProcessingJob(incoming())
+        && incoming().jobId == existing().jobId
+        && incoming().userId == existing().userId
+        && incoming().projectId == existing().projectId
+        && incoming().jobType == existing().jobType
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'stage', 'progress', 'errorMessage', 'updatedAt']);
+      allow delete: if isValidId(jobId) && isEmailVerified() && existing().userId == request.auth.uid;
+    }
+
+    // Vector Results Collection
+    match /vectorResults/{resultId} {
+      allow get: if isValidId(resultId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(resultId)
+        && isEmailVerified()
+        && isValidVectorResult(incoming())
+        && incoming().resultId == resultId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && projectOwnedByCaller(incoming().projectId);
+      allow update: if isValidId(resultId)
+        && isEmailVerified()
+        && existing().userId == request.auth.uid
+        && isValidVectorResult(incoming())
+        && incoming().resultId == existing().resultId
+        && incoming().userId == existing().userId
+        && incoming().projectId == existing().projectId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['shapeCount', 'nodeCount', 'paletteColors', 'svgContent', 'storagePath', 'updatedAt']);
+      allow delete: if isValidId(resultId) && isEmailVerified() && existing().userId == request.auth.uid;
+    }
+
+    // Upscale Results Collection
+    match /upscaleResults/{resultId} {
+      allow get: if isValidId(resultId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(resultId)
+        && isEmailVerified()
+        && isValidUpscaleResult(incoming())
+        && incoming().resultId == resultId
+        && incoming().createdAt == request.time
+        && projectOwnedByCaller(incoming().projectId);
+      allow update: if false;
+      allow delete: if isValidId(resultId) && isEmailVerified() && existing().userId == request.auth.uid;
+    }
+
+    // Download History Collection
+    match /downloadHistory/{downloadId} {
+      allow get: if isValidId(downloadId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(downloadId)
+        && isEmailVerified()
+        && isValidDownloadHistory(incoming())
+        && incoming().downloadId == downloadId
+        && incoming().createdAt == request.time
+        && projectOwnedByCaller(incoming().projectId);
+      allow update: if false;
+      allow delete: if isValidId(downloadId) && isEmailVerified() && existing().userId == request.auth.uid;
+    }
+
+    // AI Font Finder History Collection
+    match /fontSearches/{searchId} {
+      allow get: if isValidId(searchId) && isSignedIn() && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isValidId(searchId)
+        && isEmailVerified()
+        && isValidFontSearch(incoming())
+        && incoming().searchId == searchId
+        && incoming().createdAt == request.time;
+      allow update: if false;
+      allow delete: if isValidId(searchId) && isEmailVerified() && existing().userId == request.auth.uid;
+    }
+  }
+}
