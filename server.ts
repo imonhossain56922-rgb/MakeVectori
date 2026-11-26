@@ -12,6 +12,7 @@ import { createServer as createViteServer } from 'vite';
 import {
   detectImageSignature,
   generateSecureId,
+  getFirebaseStorageBucket,
   isValidSafeId,
   resolveSafeSubpath,
   sanitizeFilename,
@@ -124,34 +125,62 @@ async function registerBufferAsUpload(
   originalName: string,
   ownerUid: string | null
 ) {
+  if (!buffer || buffer.length === 0) {
+    throw new Error('The uploaded image file is empty (0 bytes).');
+  }
   const sig = detectImageSignature(buffer);
+  if (sig.isHeic) {
+    throw new Error(
+      'HEIC/HEIF photos are not supported directly on the server. Please convert or upload a PNG, JPG, JPEG, WebP, BMP, or GIF image.'
+    );
+  }
   if (!sig.valid || !sig.mimeType || !sig.extension) {
     throw new Error(
       'Unsupported or invalid file signature. Please upload a valid PNG, JPG, WebP, BMP, or GIF image.'
     );
   }
 
-  const sharpImg = sharp(buffer, { limitInputPixels: 40_000_000 });
-  const meta = await sharpImg.metadata();
-  const width = meta.width || 0;
-  const height = meta.height || 0;
-  if (width < 4 || height < 4 || width > 10000 || height > 10000) {
-    throw new Error('Image dimensions must be between 4x4 and 10000x10000 pixels.');
+  let width = 0;
+  let height = 0;
+  let hasAlpha = false;
+  let normalizedPng: Buffer;
+  let normWidth = 0;
+  let normHeight = 0;
+  let previewBuf: Buffer;
+
+  try {
+    const sharpImg = sharp(buffer, { limitInputPixels: 40_000_000, failOn: 'error' });
+    const meta = await sharpImg.metadata();
+    width = meta.width || 0;
+    height = meta.height || 0;
+    hasAlpha = meta.hasAlpha ?? false;
+    if (width < 4 || height < 4 || width > 10000 || height > 10000) {
+      throw new Error('Image dimensions must be between 4x4 and 10000x10000 pixels.');
+    }
+
+    // Normalize BMP/GIF/EXIF orientation into a clean PNG working buffer for uniform processing
+    normalizedPng = await sharpImg.rotate().ensureAlpha().png().toBuffer();
+    const normMeta = await sharp(normalizedPng).metadata();
+    normWidth = normMeta.width || width;
+    normHeight = normMeta.height || height;
+
+    previewBuf = await sharp(normalizedPng)
+      .resize(480, 480, { fit: 'inside', withoutEnlargement: true })
+      .png()
+      .toBuffer();
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Image dimensions')) {
+      throw err;
+    }
+    throw new Error(
+      'Corrupted image data or invalid image metadata. Please re-save the image as PNG or JPG and upload again.'
+    );
   }
 
-  // Normalize BMP/GIF/EXIF orientation into a clean PNG working buffer for uniform processing
-  const normalizedPng = await sharpImg.rotate().ensureAlpha().png().toBuffer();
-  const normMeta = await sharp(normalizedPng).metadata();
-
   const uploadId = generateSecureId('up');
-  const safeName = sanitizeFilename(originalName);
+  const safeName = sanitizeFilename(originalName, sig.extension);
   const filePath = resolveSafeSubpath(TMP_DIR, `${uploadId}.png`);
   fs.writeFileSync(filePath, normalizedPng);
-
-  const previewBuf = await sharp(normalizedPng)
-    .resize(480, 480, { fit: 'inside', withoutEnlargement: true })
-    .png()
-    .toBuffer();
 
   const stats = await sharp(normalizedPng).stats();
   const dominantHex =
@@ -166,9 +195,9 @@ async function registerBufferAsUpload(
     filename: safeName,
     mimeType: sig.mimeType,
     byteSize: buffer.length,
-    width: normMeta.width || width,
-    height: normMeta.height || height,
-    hasAlpha: meta.hasAlpha ?? false,
+    width: normWidth,
+    height: normHeight,
+    hasAlpha,
     filePath,
     createdAt: Date.now(),
   };
@@ -206,14 +235,35 @@ async function createServer() {
   const app = express();
   app.set('trust proxy', 1);
 
-  // Strict CORS without wildcard on authenticated routes
+  // Strict CORS allowlist supporting configured Vercel / Cloud Run HTTPS origins (no wildcard on auth routes)
+  const allowedCorsOrigins = new Set<string>();
+  const rawCorsEntries = [
+    ...(process.env.ALLOWED_CORS_ORIGINS || '').split(','),
+    process.env.APP_URL || '',
+    process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL.replace(/^https?:\/\//i, '')}` : '',
+  ];
+  for (const entry of rawCorsEntries) {
+    const clean = entry.trim();
+    if (!clean || clean === 'MY_APP_URL') continue;
+    try {
+      const parsed = new URL(clean.startsWith('http') ? clean : `https://${clean}`);
+      allowedCorsOrigins.add(parsed.origin.toLowerCase());
+    } catch {
+      // ignore invalid env entry
+    }
+  }
+
   app.use((req, res, next) => {
     const origin = req.headers.origin;
     const host = req.headers['x-forwarded-host'] || req.headers.host;
-    if (origin && host) {
+    if (origin) {
       try {
-        const originHost = new URL(origin).host;
-        if (originHost === host || originHost.startsWith('localhost:')) {
+        const parsedOrigin = new URL(origin);
+        const originHost = parsedOrigin.host.toLowerCase();
+        const normalizedOrigin = parsedOrigin.origin.toLowerCase();
+        const hostMatch = typeof host === 'string' && originHost === host.toLowerCase();
+        const isLocal = originHost.startsWith('localhost:') || originHost.startsWith('127.0.0.1:');
+        if (hostMatch || isLocal || allowedCorsOrigins.has(normalizedOrigin)) {
           res.setHeader('Access-Control-Allow-Origin', origin);
           res.setHeader('Vary', 'Origin');
         }
@@ -222,7 +272,7 @@ async function createServer() {
       }
     }
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Requested-With');
     if (req.method === 'OPTIONS') {
       res.status(204).end();
       return;
@@ -333,6 +383,78 @@ async function createServer() {
       res.json(meta);
     } catch (err) {
       res.status(400).json({ error: err instanceof Error ? err.message : 'Upload failed.' });
+    }
+  });
+
+  // Upload Raster Image from User's Verified Firebase Storage Object (Large-File / Proxy-Bypass Fallback)
+  app.post('/api/upload/from-storage', async (req, res) => {
+    try {
+      const caller = await verifyOptionalFirebaseAuth(req.headers.authorization);
+      if (!caller || !caller.emailVerified) {
+        res.status(401).json({ error: 'Verified Firebase sign-in is required for storage upload.' });
+        return;
+      }
+      const bucket = getFirebaseStorageBucket();
+      if (!bucket) {
+        res.status(503).json({ error: 'Firebase Storage bucket is not configured on the server.' });
+        return;
+      }
+      const downloadUrlRaw = String(req.body?.downloadUrl || '').trim();
+      const rawFilename = String(req.body?.filename || 'uploaded_image').trim();
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(downloadUrlRaw);
+      } catch {
+        res.status(400).json({ error: 'Invalid storage download URL.' });
+        return;
+      }
+      if (
+        parsedUrl.protocol !== 'https:' ||
+        parsedUrl.hostname.toLowerCase() !== 'firebasestorage.googleapis.com'
+      ) {
+        res.status(400).json({ error: 'Disallowed storage host.' });
+        return;
+      }
+      const prefix = `/v0/b/${bucket}/o/`;
+      if (!parsedUrl.pathname.startsWith(prefix)) {
+        res.status(403).json({ error: 'Storage bucket mismatch.' });
+        return;
+      }
+      const objectPath = decodeURIComponent(parsedUrl.pathname.slice(prefix.length));
+      if (
+        !objectPath.startsWith(`users/${caller.uid}/uploads/`) ||
+        objectPath.includes('..') ||
+        objectPath.includes('\\')
+      ) {
+        res.status(403).json({ error: 'Unauthorized storage object path.' });
+        return;
+      }
+
+      const fetchRes = await fetch(parsedUrl.toString(), {
+        signal: AbortSignal.timeout(20_000),
+      });
+      if (!fetchRes.ok) {
+        res.status(400).json({ error: `Unable to fetch uploaded storage image (HTTP ${fetchRes.status}).` });
+        return;
+      }
+      const contentLen = Number(fetchRes.headers.get('content-length') || 0);
+      if (contentLen > MAX_UPLOAD_BYTES) {
+        res.status(413).json({ error: `Image file exceeds maximum allowed size (${MAX_UPLOAD_MB} MB).` });
+        return;
+      }
+      const arrBuf = await fetchRes.arrayBuffer();
+      const buf = Buffer.from(arrBuf);
+      if (buf.length > MAX_UPLOAD_BYTES) {
+        res.status(413).json({ error: `Image file exceeds maximum allowed size (${MAX_UPLOAD_MB} MB).` });
+        return;
+      }
+
+      const meta = await registerBufferAsUpload(buf, rawFilename, caller.uid);
+      res.json(meta);
+    } catch (err) {
+      res.status(400).json({
+        error: err instanceof Error ? err.message : 'Storage upload processing failed.',
+      });
     }
   });
 
@@ -975,6 +1097,65 @@ async function createServer() {
       res.status(500).json({ error: err instanceof Error ? err.message : 'ZIP packaging failed.' });
     }
   });
+
+  // Catch-all for unknown /api routes so HTML is NEVER returned for API requests
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'API endpoint not found.' });
+  });
+
+  // Global JSON error handler for Multer & Express body parsing errors (prevents HTML 413/400 pages)
+  app.use(
+    (
+      err: unknown,
+      req: express.Request,
+      res: express.Response,
+      next: express.NextFunction
+    ) => {
+      if (!err) {
+        next();
+        return;
+      }
+      if (res.headersSent) {
+        next(err);
+        return;
+      }
+
+      const multerErr = err as { code?: string; type?: string; status?: number; message?: string };
+      if (multerErr instanceof multer.MulterError) {
+        if (multerErr.code === 'LIMIT_FILE_SIZE') {
+          res.status(413).json({
+            error: `Image file is too large. Maximum allowed size is ${MAX_UPLOAD_MB} MB.`,
+          });
+          return;
+        }
+        res.status(400).json({
+          error: `Upload validation error: ${multerErr.message || 'Invalid multipart form upload.'}`,
+        });
+        return;
+      }
+
+      if (multerErr?.type === 'entity.too.large' || multerErr?.status === 413) {
+        res.status(413).json({
+          error: `Request payload is too large. Maximum allowed size is ${MAX_UPLOAD_MB} MB.`,
+        });
+        return;
+      }
+
+      if (err instanceof SyntaxError && multerErr?.status === 400) {
+        res.status(400).json({ error: 'Invalid JSON request payload.' });
+        return;
+      }
+
+      if (req.path.startsWith('/api')) {
+        res.status(multerErr?.status || 500).json({
+          error: err instanceof Error ? err.message : 'Unexpected server error.',
+        });
+        return;
+      }
+
+      next(err);
+    }
+  );
 
   const httpServer = http.createServer(app);
 

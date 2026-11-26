@@ -9,10 +9,22 @@ export function isValidSafeId(id: unknown): id is string {
   return typeof id === 'string' && SAFE_ID_REGEX.test(id);
 }
 
-export function sanitizeFilename(name: string): string {
-  const base = path.basename(name || 'image');
-  const cleaned = base.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 120);
-  return cleaned || 'image';
+export function sanitizeFilename(name: string, fallbackExt = ''): string {
+  const leaf = path.basename(String(name || 'image').replace(/\\/g, '/'));
+  const parsed = path.parse(leaf);
+  const rawStem = parsed.name || 'image';
+  const rawExt = (parsed.ext || '').replace(/^\./, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const cleanStem =
+    rawStem
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-zA-Z0-9_-]+/g, '_')
+      .replace(/^[-_]+|[-_]+$/g, '')
+      .slice(0, 64) || 'image';
+
+  const chosenExt = rawExt || fallbackExt.replace(/^\./, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  return chosenExt ? `${cleanStem}.${chosenExt}` : cleanStem;
 }
 
 export function resolveSafeSubpath(baseDir: string, targetName: string): string {
@@ -26,6 +38,7 @@ export function resolveSafeSubpath(baseDir: string, targetName: string): string 
 
 export interface MagicSignatureResult {
   valid: boolean;
+  isHeic?: boolean;
   mimeType: string | null;
   extension: string | null;
 }
@@ -100,6 +113,14 @@ export function detectImageSignature(buf: Buffer): MagicSignatureResult {
     return { valid: true, mimeType: 'image/bmp', extension: 'bmp' };
   }
 
+  // ISO BMFF HEIC/HEIF: ....ftyp(heic|heix|heim|heis|hevc|hevx|mif1|msf1)
+  if (buf[4] === 0x66 && buf[5] === 0x74 && buf[6] === 0x79 && buf[7] === 0x70) {
+    const brand = buf.subarray(8, 12).toString('ascii').toLowerCase();
+    if (['heic', 'heix', 'heim', 'heis', 'hevc', 'hevx', 'mif1', 'msf1'].includes(brand)) {
+      return { valid: false, isHeic: true, mimeType: 'image/heic', extension: 'heic' };
+    }
+  }
+
   return { valid: false, mimeType: null, extension: null };
 }
 
@@ -123,17 +144,24 @@ export function generateSecureId(prefix: string): string {
 let cachedCerts: Record<string, string> | null = null;
 let certsExpiresAt = 0;
 
-function getFirebaseProjectId(): string | null {
+function readFirebaseConfig(): { projectId?: string; storageBucket?: string } | null {
   try {
     const cfgPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
     if (fs.existsSync(cfgPath)) {
-      const parsed = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      return parsed.projectId || null;
+      return JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
     }
   } catch {
     // ignore
   }
   return null;
+}
+
+function getFirebaseProjectId(): string | null {
+  return readFirebaseConfig()?.projectId || null;
+}
+
+export function getFirebaseStorageBucket(): string | null {
+  return readFirebaseConfig()?.storageBucket || null;
 }
 
 async function fetchGoogleCerts(): Promise<Record<string, string>> {

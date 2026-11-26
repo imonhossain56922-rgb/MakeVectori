@@ -45,7 +45,8 @@ MakeVectorizer is a production full-stack vectorization, 4X image upscaling, sma
      --set-env-vars PROCESSING_WORKER_SECRET=your_shared_secret
    ```
 2. **Vercel Frontend**:
-   - Update `vercel.json` `destination` URL to point `/api/(.*)` to your deployed Cloud Run service or Express backend.
+   - Deploy the Node/Express processing server (`server.ts`, e.g., to Cloud Run, Render, or Railway) with `ALLOWED_CORS_ORIGINS=https://your-vercel-app.vercel.app`.
+   - In Vercel Project Settings > Environment Variables, set `VITE_API_BASE_URL` to your deployed HTTPS backend URL (e.g., `https://your-backend-service.run.app`). Calling the backend directly via `VITE_API_BASE_URL` also avoids Vercel's 4.5 MB serverless proxy payload limit and supports full 25 MB uploads.
    - Push to GitHub and import the repository in Vercel (`npm run build`, output `dist`).
 3. **Firebase**:
    - Deploy `firestore.rules` and `storage.rules` via Firebase CLI:

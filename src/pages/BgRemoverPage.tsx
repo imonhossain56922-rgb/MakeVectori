@@ -405,10 +405,18 @@ export const BgRemoverPage: React.FC<BgRemoverPageProps> = ({
               <div className="bg-white border border-slate-200 rounded-xl p-5 flex flex-col items-center justify-center min-h-[420px]">
                 <div className="relative inline-block">
                   <img
-                    src={activeUpload.previewDataUrl}
+                    src={activeUpload.localPreviewUrl || activeUpload.previewDataUrl}
                     alt={activeUpload.filename}
                     referrerPolicy="no-referrer"
                     onClick={handleCanvasSeedClick}
+                    onError={(e) => {
+                      if (
+                        activeUpload.previewDataUrl &&
+                        e.currentTarget.src !== activeUpload.previewDataUrl
+                      ) {
+                        e.currentTarget.src = activeUpload.previewDataUrl;
+                      }
+                    }}
                     className={`max-h-[380px] object-contain rounded-lg border border-slate-200 ${
                       brushType !== 'none' ? 'cursor-crosshair' : ''
                     }`}

@@ -41,7 +41,7 @@ export const BatchPage: React.FC = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [pendingDownload, setPendingDownload] = useState<(() => void) | null>(null);
 
-  const handleFilesSelected = async (files: FileList | null) => {
+  const handleFilesSelected = async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     setUploadError(null);
     for (const file of Array.from(files)) {
@@ -64,8 +64,9 @@ export const BatchPage: React.FC = () => {
         };
         setItems((prev) => [...prev, item]);
       } catch (err) {
+        const label = file.name || 'selected_image';
         setUploadError(
-          `${file.name}: ${err instanceof Error ? err.message : 'Upload failed'}`
+          `${label}: ${err instanceof Error ? err.message : 'Upload failed'}`
         );
       }
     }
@@ -248,7 +249,7 @@ export const BatchPage: React.FC = () => {
             ref={fileInputRef}
             type="file"
             multiple
-            accept="image/png,image/jpeg,image/webp,image/bmp,image/gif"
+            accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.bmp,.gif,.heic,.heif"
             className="hidden"
             onChange={(e) => {
               handleFilesSelected(e.target.files);

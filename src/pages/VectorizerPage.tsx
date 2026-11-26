@@ -254,9 +254,17 @@ export const VectorizerPage: React.FC<VectorizerPageProps> = ({
                   </div>
                   <div className="aspect-4/3 rounded-lg border border-slate-200 bg-checkerboard flex items-center justify-center p-3 overflow-hidden">
                     <img
-                      src={activeUpload.previewDataUrl}
+                      src={activeUpload.localPreviewUrl || activeUpload.previewDataUrl}
                       alt={activeUpload.filename}
                       referrerPolicy="no-referrer"
+                      onError={(e) => {
+                        if (
+                          activeUpload.previewDataUrl &&
+                          e.currentTarget.src !== activeUpload.previewDataUrl
+                        ) {
+                          e.currentTarget.src = activeUpload.previewDataUrl;
+                        }
+                      }}
                       className="max-w-full max-h-full object-contain"
                     />
                   </div>

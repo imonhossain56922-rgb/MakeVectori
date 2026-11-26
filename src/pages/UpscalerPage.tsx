@@ -448,9 +448,17 @@ export const UpscalerPage: React.FC<UpscalerPageProps> = ({
             ) : (
               <div className="bg-white border border-slate-200 rounded-xl p-6 flex flex-col items-center justify-center min-h-[440px] gap-4">
                 <img
-                  src={activeUpload.previewDataUrl}
+                  src={activeUpload.localPreviewUrl || activeUpload.previewDataUrl}
                   alt={activeUpload.filename}
                   referrerPolicy="no-referrer"
+                  onError={(e) => {
+                    if (
+                      activeUpload.previewDataUrl &&
+                      e.currentTarget.src !== activeUpload.previewDataUrl
+                    ) {
+                      e.currentTarget.src = activeUpload.previewDataUrl;
+                    }
+                  }}
                   className="max-h-[340px] object-contain rounded-lg border border-slate-100"
                 />
                 <div className="flex flex-wrap items-center justify-center gap-3">

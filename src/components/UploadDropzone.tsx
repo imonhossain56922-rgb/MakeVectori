@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ClipboardPaste, ImagePlus, Loader2, Upload } from 'lucide-react';
 import { loadSampleImage, uploadImageFile } from '../lib/apiClient.ts';
-import { buildSafeImageFile, readClipboardImageSafe } from '../lib/imageUtils.ts';
+import { readClipboardImageSafe } from '../lib/imageUtils.ts';
 import type { UploadMetadata } from '../types/vector.ts';
 
 interface UploadDropzoneProps {
@@ -22,12 +22,11 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const handleFile = async (file: File) => {
+  const handleFile = async (file: File | Blob) => {
     setError(null);
     setUploading(true);
     try {
-      const safeFile = buildSafeImageFile(file, file.name || 'uploaded_image', file.type);
-      const meta = await uploadImageFile(safeFile);
+      const meta = await uploadImageFile(file);
       onUploaded(meta);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed.');
@@ -67,12 +66,11 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
       const items = e.clipboardData?.items;
       if (!items) return;
       for (const item of Array.from(items)) {
-        if (item.type && item.type.toLowerCase().startsWith('image/')) {
+        if (item.kind === 'file' || (item.type && item.type.toLowerCase().startsWith('image/'))) {
           const blob = item.getAsFile();
-          if (blob) {
+          if (blob && blob.size > 0) {
             e.preventDefault();
-            const safeFile = buildSafeImageFile(blob, 'clipboard_image', item.type);
-            handleFile(safeFile);
+            handleFile(blob);
             return;
           }
         }
@@ -93,8 +91,20 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
         onDrop={(e) => {
           e.preventDefault();
           setDragging(false);
-          const file = e.dataTransfer.files?.[0];
-          if (file) handleFile(file);
+          let file: File | null = e.dataTransfer?.files?.[0] || null;
+          if (!file && e.dataTransfer?.items) {
+            for (const item of Array.from(e.dataTransfer.items)) {
+              if (item.kind === 'file') {
+                file = item.getAsFile();
+                if (file) break;
+              }
+            }
+          }
+          if (file) {
+            handleFile(file);
+          } else {
+            setError('No readable image file was found in the dropped item.');
+          }
         }}
         className={`relative rounded-xl border-2 border-dashed transition-colors ${
           dragging
@@ -105,7 +115,7 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
         <input
           ref={fileInputRef}
           type="file"
-          accept="image/png,image/jpeg,image/webp,image/bmp,image/gif"
+          accept="image/png,image/jpeg,image/webp,image/bmp,image/gif,image/heic,image/heif,.png,.jpg,.jpeg,.webp,.bmp,.gif,.heic,.heif"
           className="hidden"
           onChange={(e) => {
             const file = e.target.files?.[0];

@@ -126,22 +126,13 @@ export const FontFinderPage: React.FC<FontFinderPageProps> = ({
   const autoDetectedUploadIdRef = useRef<string | null>(null);
   const researchOutcomeRef = useRef<HTMLDivElement>(null);
 
-  // Clean up running requests & blob preview URLs on unmount
+  // Clean up running requests on unmount; blob preview URL lifecycle is managed by App/handleRemoveImage
   useEffect(() => {
     return () => {
       detectAbortRef.current?.abort();
       researchAbortRef.current?.abort();
     };
   }, []);
-
-  useEffect(() => {
-    const previewUrl = activeUpload?.localPreviewUrl;
-    return () => {
-      if (previewUrl && previewUrl.startsWith('blob:')) {
-        URL.revokeObjectURL(previewUrl);
-      }
-    };
-  }, [activeUpload?.localPreviewUrl]);
 
   const computePixelCrop = useCallback((): FontCropRect | null => {
     if (!activeUpload) return null;
@@ -628,6 +619,14 @@ export const FontFinderPage: React.FC<FontFinderPageProps> = ({
                   alt={activeUpload.filename}
                   referrerPolicy="no-referrer"
                   draggable={false}
+                  onError={(e) => {
+                    if (
+                      activeUpload.previewDataUrl &&
+                      e.currentTarget.src !== activeUpload.previewDataUrl
+                    ) {
+                      e.currentTarget.src = activeUpload.previewDataUrl;
+                    }
+                  }}
                   style={{
                     transform: rotateDeg ? `rotate(${rotateDeg}deg)` : undefined,
                   }}

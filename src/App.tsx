@@ -67,11 +67,28 @@ const ROUTE_TITLES: Record<AppRoute, string> = {
 export default function App() {
   const [route, setRoute] = useState<AppRoute>(() => parseRoute(window.location.pathname));
   const [user, setUser] = useState<User | null>(null);
-  const [activeUpload, setActiveUpload] = useState<UploadMetadata | null>(null);
+  const [activeUpload, setActiveUploadState] = useState<UploadMetadata | null>(null);
   const [activeVectorDoc, setActiveVectorDoc] = useState<VectorDocument | null>(null);
   const [activeProjectId, setActiveProjectId] = useState<string | undefined>(undefined);
   const [pendingFontDesign, setPendingFontDesign] = useState<PendingFontDesign | null>(null);
   const [sessionNotice, setSessionNotice] = useState<string | null>(null);
+
+  const setActiveUpload = (next: UploadMetadata | null) => {
+    setActiveUploadState((prev) => {
+      if (
+        prev?.localPreviewUrl &&
+        prev.localPreviewUrl.startsWith('blob:') &&
+        prev.localPreviewUrl !== next?.localPreviewUrl
+      ) {
+        try {
+          URL.revokeObjectURL(prev.localPreviewUrl);
+        } catch {
+          // ignore
+        }
+      }
+      return next;
+    });
+  };
 
   useEffect(() => {
     const onPop = () => setRoute(parseRoute(window.location.pathname));
