@@ -36,7 +36,7 @@ import {
 } from 'lucide-react';
 import { rebuildPaletteFromShapes, serializeDocumentToSvg } from '../lib/svgClient.ts';
 import { convertFontTextToVectorShape } from '../lib/apiClient.ts';
-import { loadCandidateWebfont } from '../lib/fontLoader.ts';
+import { loadWebfontTarget } from '../lib/fontLoader.ts';
 import type { PendingFontDesign, VectorDocument, VectorShape } from '../types/vector.ts';
 import { PalettePanel } from './PalettePanel.tsx';
 import { BeforeAfterViewer } from './BeforeAfterViewer.tsx';
@@ -178,17 +178,17 @@ export const VectorEditorWorkspace: React.FC<VectorEditorWorkspaceProps> = ({
 
   React.useEffect(() => {
     if (!pendingFontDesign) return;
-    loadCandidateWebfont(
+    loadWebfontTarget(
       {
         id: pendingFontDesign.fontId,
         family: pendingFontDesign.family,
-        recommendedWeight: pendingFontDesign.weight,
+        weight: pendingFontDesign.weight || 400,
         previewFontUrls: {
           woff2: pendingFontDesign.woff2Url,
           ttf: pendingFontDesign.ttfUrl,
         },
         cssUrl: pendingFontDesign.cssUrl || '',
-        matchType: 'similar-free',
+        unavailable: false,
       },
       pendingFontDesign.weight,
       pendingFontDesign.isItalic
@@ -459,6 +459,7 @@ export const VectorEditorWorkspace: React.FC<VectorEditorWorkspaceProps> = ({
     try {
       const outlined = await convertFontTextToVectorShape({
         fontId: pendingFontDesign.fontId,
+        family: pendingFontDesign.family,
         text: shape.textContent,
         fontSize: shape.fontSize || 48,
         weight: shape.fontWeight || pendingFontDesign.weight || 400,

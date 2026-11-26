@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ClipboardPaste, ImagePlus, Loader2, Upload } from 'lucide-react';
 import { loadSampleImage, uploadImageFile } from '../lib/apiClient.ts';
+import { buildSafeImageFile, readClipboardImageSafe } from '../lib/imageUtils.ts';
 import type { UploadMetadata } from '../types/vector.ts';
 
 interface UploadDropzoneProps {
@@ -25,7 +26,8 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
     setError(null);
     setUploading(true);
     try {
-      const meta = await uploadImageFile(file);
+      const safeFile = buildSafeImageFile(file, file.name || 'uploaded_image', file.type);
+      const meta = await uploadImageFile(safeFile);
       onUploaded(meta);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed.');
@@ -49,26 +51,15 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
 
   const handlePasteFromClipboard = async () => {
     setError(null);
-    try {
-      if (!navigator.clipboard?.read) {
-        setError('Press Ctrl+V / Cmd+V anywhere on this page to paste an image.');
-        return;
-      }
-      const items = await navigator.clipboard.read();
-      for (const item of items) {
-        const imgType = item.types.find((t) => t.startsWith('image/'));
-        if (imgType) {
-          const blob = await item.getType(imgType);
-          const ext = imgType.split('/')[1] || 'png';
-          const file = new File([blob], `pasted_image.${ext}`, { type: imgType });
-          await handleFile(file);
-          return;
-        }
-      }
-      setError('No image found on your clipboard.');
-    } catch {
-      setError('Press Ctrl+V / Cmd+V anywhere on this page to paste an image.');
+    const result = await readClipboardImageSafe();
+    if (result.file) {
+      await handleFile(result.file);
+      return;
     }
+    setError(
+      result.errorMessage ||
+        'Unable to read an image from your clipboard. Please tap Upload Image instead.'
+    );
   };
 
   useEffect(() => {
@@ -76,11 +67,12 @@ export const UploadDropzone: React.FC<UploadDropzoneProps> = ({
       const items = e.clipboardData?.items;
       if (!items) return;
       for (const item of Array.from(items)) {
-        if (item.type.startsWith('image/')) {
-          const file = item.getAsFile();
-          if (file) {
+        if (item.type && item.type.toLowerCase().startsWith('image/')) {
+          const blob = item.getAsFile();
+          if (blob) {
             e.preventDefault();
-            handleFile(file);
+            const safeFile = buildSafeImageFile(blob, 'clipboard_image', item.type);
+            handleFile(safeFile);
             return;
           }
         }

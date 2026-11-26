@@ -8,6 +8,7 @@ import {
 } from '../lib/apiClient.ts';
 import { auth, verifyActiveAuthSession } from '../lib/firebase.ts';
 import { logDownloadRecord, saveUpscaleOrBgProjectToFirebase } from '../lib/firestoreService.ts';
+import { dataUrlToBlob } from '../lib/imageUtils.ts';
 import {
   DEFAULT_BG_REMOVE_OPTIONS,
   type BackgroundRemoveOptions,
@@ -136,8 +137,7 @@ export const BgRemoverPage: React.FC<BgRemoverPageProps> = ({
 
   const performDownload = async () => {
     if (!result || !activeUpload) return;
-    const res = await fetch(result.imageDataUrl);
-    const blob = await res.blob();
+    const blob = dataUrlToBlob(result.imageDataUrl, 'image/png');
     const outName = `${activeUpload.filename.replace(/\.[^/.]+$/, '')}_nobg.png`;
     triggerBrowserDownload(blob, outName);
 

@@ -1,9 +1,10 @@
 import { auth } from './firebase.ts';
+import { trimToken, trimUrl } from './imageUtils.ts';
 import type {
   BackgroundRemoveOptions,
+  DetectedTextRegion,
   ExportOptions,
   FontCropRect,
-  FontSearchFilters,
   ProcessingJobState,
   UploadMetadata,
   UpscaleOptions,
@@ -17,8 +18,8 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   const user = auth.currentUser;
   if (!user) return {};
   try {
-    const token = await user.getIdToken();
-    return { Authorization: `Bearer ${token}` };
+    const token = trimToken(await user.getIdToken());
+    return token ? { Authorization: `Bearer ${token}` } : {};
   } catch {
     return {};
   }
@@ -31,10 +32,11 @@ export async function fetchEngineHealth(): Promise<{
     vectorizer: { available: boolean; name: string; isExternalWorker: boolean };
     upscaler: { available: boolean; name: string; isExternalWorker: boolean };
     backgroundRemover: { available: boolean; name: string; isExternalWorker: boolean };
-    aiAnalyzer: { available: boolean; model: string };
+    aiAnalyzer: { available: boolean };
+    fontFinder?: { available: boolean; sources: string[] };
   };
 }> {
-  const res = await fetch('/api/health');
+  const res = await fetch(trimUrl('/api/health'));
   if (!res.ok) throw new Error('Unable to reach processing server.');
   return res.json();
 }
@@ -44,14 +46,31 @@ export async function uploadImageFile(file: File): Promise<UploadMetadata> {
   const form = new FormData();
   form.append('file', file);
 
-  const res = await fetch('/api/upload', {
+  const res = await fetch(trimUrl('/api/upload'), {
     method: 'POST',
     headers,
     body: form,
   });
-  const data = await res.json();
+  const data = (await res.json()) as UploadMetadata & { error?: string };
   if (!res.ok) throw new Error(data.error || 'Image upload failed.');
-  return data;
+  const localPreviewUrl =
+    typeof URL !== 'undefined' && typeof URL.createObjectURL === 'function'
+      ? URL.createObjectURL(file)
+      : undefined;
+  return {
+    ...data,
+    ...(localPreviewUrl ? { localPreviewUrl } : {}),
+  };
+}
+
+export async function removeUploadedImage(uploadId: string): Promise<void> {
+  const cleanId = trimToken(uploadId);
+  if (!cleanId) return;
+  const headers = await getAuthHeaders();
+  await fetch(trimUrl(`/api/upload/${encodeURIComponent(cleanId)}`), {
+    method: 'DELETE',
+    headers,
+  }).catch(() => {});
 }
 
 export async function loadSampleImage(sample: 'emblem' | 'illustration' | 'watch'): Promise<UploadMetadata> {
@@ -131,19 +150,41 @@ export async function startBgRemoveJob(
   return data.jobId;
 }
 
-export async function startFontFinderJob(
+export async function startFontDetectJob(
   uploadId: string,
   crop?: FontCropRect | null,
-  filters?: FontSearchFilters
+  customHint?: string
 ): Promise<string> {
   const headers = await getAuthHeaders();
-  const res = await fetch('/api/font-finder/analyze', {
+  const res = await fetch(trimUrl('/api/font-finder/detect'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
-    body: JSON.stringify({ uploadId, crop, filters }),
+    body: JSON.stringify({ uploadId: trimToken(uploadId), crop, customHint }),
   });
   const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to start AI Font Finder.');
+  if (!res.ok) throw new Error(data.error || 'Failed to start typography detection.');
+  return data.jobId;
+}
+
+export async function startFontResearchJob(
+  uploadId: string,
+  region: DetectedTextRegion,
+  extractedTextOverride?: string,
+  crop?: FontCropRect | null
+): Promise<string> {
+  const headers = await getAuthHeaders();
+  const res = await fetch(trimUrl('/api/font-finder/research'), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...headers },
+    body: JSON.stringify({
+      uploadId: trimToken(uploadId),
+      region,
+      extractedTextOverride,
+      crop,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to start font verification.');
   return data.jobId;
 }
 
@@ -151,7 +192,7 @@ export async function downloadVerifiedFontFile(
   proxyUrl: string,
   fallbackFilename: string
 ): Promise<{ blob: Blob; filename: string }> {
-  const res = await fetch(proxyUrl);
+  const res = await fetch(trimUrl(proxyUrl));
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: 'Font download failed.' }));
     throw new Error(err.error || 'Font download failed.');
@@ -167,6 +208,7 @@ export async function downloadVerifiedFontFile(
 
 export async function convertFontTextToVectorShape(params: {
   fontId: string;
+  family?: string;
   text: string;
   fontSize?: number;
   weight?: number;
@@ -176,7 +218,7 @@ export async function convertFontTextToVectorShape(params: {
   fill?: string;
 }): Promise<VectorShape> {
   const headers = await getAuthHeaders();
-  const res = await fetch('/api/font-finder/outline', {
+  const res = await fetch(trimUrl('/api/font-finder/outline'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...headers },
     body: JSON.stringify(params),

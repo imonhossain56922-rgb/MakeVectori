@@ -473,7 +473,7 @@ export const DashboardPage: React.FC<DashboardPageProps> = ({
                     Text: &ldquo;{fs.extractedText}&rdquo;
                   </div>
                   <div className="text-[11px] text-slate-500">
-                    {fs.isExactMatch ? 'Exact match' : 'Similar free alternative'} · {fs.licenseClass}
+                    {fs.isExactMatch ? 'Verified exact match' : 'Exact font not found'} · {fs.licenseClass}
                   </div>
                 </div>
                 <div className="flex items-center justify-between pt-2 border-t border-slate-100">

@@ -252,7 +252,7 @@ export const HomePage: React.FC<HomePageProps> = ({ onNavigate, onStartWithUploa
                   </h3>
                 </div>
                 <p className="text-sm text-slate-600 leading-relaxed">
-                  Upload any image containing text to detect typography regions, identify exact or visually similar free fonts across Google Fonts and Fontsource, preview your exact image text in real loaded webfonts side-by-side, verify licenses, and download TTF/WOFF2/ZIP packages.
+                  Upload any image containing text to automatically detect distinct typography regions, select any text block, verify the exact original font across font registries and official foundries, inspect live specimens, and download verified TTF/OTF/WOFF2/ZIP files.
                 </p>
               </div>
               <button

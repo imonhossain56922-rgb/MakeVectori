@@ -42,6 +42,21 @@ const FONT_FINDER_STAGES = [
   'Preparing Results',
 ];
 
+const FONT_DETECT_STAGES = [
+  'Analyzing uploaded image...',
+  'Detecting text regions...',
+  'Extracting typography features...',
+];
+
+const FONT_RESEARCH_STAGES = [
+  'Analyzing selected letterforms...',
+  'Searching font databases...',
+  'Investigating official foundries...',
+  'Comparing font specimens...',
+  'Verifying exact font identity...',
+  'Preparing verified result...',
+];
+
 interface ProcessingModalProps {
   job: ProcessingJobState | null;
   onCancel: () => void;
@@ -57,11 +72,20 @@ export const ProcessingModal: React.FC<ProcessingModalProps> = ({
 }) => {
   if (!job) return null;
 
+  const isFontJob =
+    job.jobType === 'font-detect' ||
+    job.jobType === 'font-research' ||
+    job.jobType === 'font-finder';
+
   const stages =
     job.jobType === 'upscale'
       ? UPSCALE_STAGES
       : job.jobType === 'remove-background'
       ? BG_STAGES
+      : job.jobType === 'font-detect'
+      ? FONT_DETECT_STAGES
+      : job.jobType === 'font-research'
+      ? FONT_RESEARCH_STAGES
       : job.jobType === 'font-finder'
       ? FONT_FINDER_STAGES
       : VECTOR_STAGES;
@@ -71,8 +95,12 @@ export const ProcessingModal: React.FC<ProcessingModalProps> = ({
       ? 'Enhancing & Upscaling Image'
       : job.jobType === 'remove-background'
       ? 'Removing Background'
+      : job.jobType === 'font-detect'
+      ? 'Detecting Typography Regions'
+      : job.jobType === 'font-research'
+      ? 'Researching Exact Original Font'
       : job.jobType === 'font-finder'
-      ? 'AI Font Finder Agent Analyzing Typography'
+      ? 'Analyzing Typography'
       : 'Converting Pixels Into Vector Paths';
 
   return (
@@ -81,9 +109,11 @@ export const ProcessingModal: React.FC<ProcessingModalProps> = ({
         <div className="flex items-start justify-between gap-4 mb-5">
           <div>
             <h3 className="text-lg font-bold text-slate-900">{title}</h3>
-            <p className="text-xs text-slate-500 mt-1">
-              Engine: {job.engine}
-            </p>
+            {!isFontJob && job.engine && (
+              <p className="text-xs text-slate-500 mt-1">
+                Engine: {job.engine}
+              </p>
+            )}
           </div>
           {(job.status === 'failed' || job.status === 'cancelled' || job.status === 'completed') && (
             <button

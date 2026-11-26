@@ -15,7 +15,7 @@ export async function analyzeImageWithGemini(
   imageBase64: string,
   mimeType: string
 ): Promise<AiAnalysisRecommendation> {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const apiKey = (process.env.GEMINI_API_KEY || '').trim();
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
     throw new Error('GEMINI_API_KEY is not configured in server secrets.');
   }

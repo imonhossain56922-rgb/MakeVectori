@@ -163,12 +163,13 @@ export interface UploadMetadata {
   height: number;
   hasAlpha: boolean;
   previewDataUrl: string;
+  localPreviewUrl?: string;
   dominantColors: string[];
 }
 
 export interface ProcessingJobState {
   jobId: string;
-  jobType: 'vectorize' | 'upscale' | 'remove-background' | 'font-finder';
+  jobType: 'vectorize' | 'upscale' | 'remove-background' | 'font-finder' | 'font-detect' | 'font-research';
   status: 'waiting' | 'processing' | 'completed' | 'failed' | 'cancelled';
   stage: string;
   stageIndex: number;
@@ -190,6 +191,8 @@ export interface ProcessingJobState {
     mimeType?: string;
     processingMs?: number;
     fontFinderResult?: FontFinderResult;
+    fontDetectionResult?: FontDetectionResult;
+    fontResearchResult?: FontResearchResult;
   };
 }
 
@@ -409,7 +412,7 @@ export interface TextRegionDetection {
 }
 
 export interface FontDownloadOption {
-  format: 'ZIP' | 'TTF' | 'WOFF2' | 'WOFF';
+  format: 'ZIP' | 'OTF' | 'TTF' | 'WOFF2' | 'WOFF';
   url: string;
   proxyUrl: string;
   verified: boolean;
@@ -462,6 +465,7 @@ export interface FontSourceHealth {
   source: string;
   ok: boolean;
   count: number;
+  method?: string;
   error?: string;
 }
 
@@ -476,6 +480,140 @@ export interface FontFinderResult {
   processingMs: number;
 }
 
+// ============================================================
+// Two-Phase Automatic Detection & Exact Font Research Types
+// ============================================================
+
+export type TextRegionRole =
+  | 'main_headline'
+  | 'secondary_headline'
+  | 'subheading'
+  | 'body_text'
+  | 'brand_name'
+  | 'logo_lettering'
+  | 'product_name'
+  | 'caption'
+  | 'decorative'
+  | 'small_text'
+  | 'display';
+
+export interface GlyphAnatomyAnalysis {
+  serifConstruction: string;
+  strokeThickness: string;
+  strokeContrast: 'Low' | 'Medium' | 'High' | 'Variable';
+  terminalShapes: string;
+  apertureSize: string;
+  counterAndBowlShape: string;
+  ascenderDescenderProportion: string;
+  crossbarAndArmAngles: string;
+  numeralAndPunctuationNotes: string;
+  distinctiveGlyphObservations: string[];
+  distortionsAndEffectsSeparated: string[];
+}
+
+export interface DetectedTextRegion {
+  regionId: string;
+  regionNumber: number;
+  role: TextRegionRole;
+  roleLabel: string;
+  extractedText: string;
+  bbox: { ymin: number; xmin: number; ymax: number; xmax: number };
+  orientation: 'horizontal' | 'vertical' | 'angled' | 'curved';
+  rotationDeg: number;
+  estimatedFontSizePx: number;
+  alignment: 'left' | 'center' | 'right' | 'justified' | 'mixed';
+  lineSpacingEstimate: 'Tight' | 'Normal' | 'Loose';
+  letterSpacingEstimate: 'Tight' | 'Normal' | 'Wide';
+  appearance: {
+    weightEstimate: string;
+    numericWeight: number;
+    isItalic: boolean;
+    widthClass: 'Condensed' | 'Normal' | 'Extended';
+    styleClassifications: string[];
+    primaryClassification: string;
+  };
+  distortionsAndEffects: string[];
+  imageQualityWarnings: string[];
+  cropDataUrl: string;
+  rasterMetrics: {
+    widthPx: number;
+    heightPx: number;
+    aspectRatio: number;
+    foregroundDensity: number;
+    contrastRatio: number;
+    dominantTextColor: string;
+    dominantBgColor: string;
+  };
+  glyphAnalysis: GlyphAnatomyAnalysis;
+}
+
+export interface FontDetectionResult {
+  uploadId: string;
+  imageWidth: number;
+  imageHeight: number;
+  detectedRotationDeg: number;
+  overallSummary: string;
+  regions: DetectedTextRegion[];
+  processingMs: number;
+}
+
+export interface VerifiedExactFontMatch {
+  id: string;
+  family: string;
+  verifiedStyle: string;
+  weight: number;
+  weightLabel: string;
+  isItalic: boolean;
+  foundryOrDesigner: string;
+  verificationStatus: 'Verified Exact Match';
+  verificationEvidence: string[];
+  glyphComparisonNotes: string;
+  internalConfidence: number;
+  licenseName: string;
+  licenseClass: FontLicenseClass | 'Commercial Proprietary License';
+  commercialUseAllowed: boolean | null;
+  officialSourceName: string;
+  officialPageUrl: string | null;
+  specimenPreview: {
+    available: boolean;
+    unavailableReason?: string;
+    cssUrl: string;
+    previewFontUrls: {
+      woff2?: string;
+      woff?: string;
+      ttf?: string;
+      otf?: string;
+    };
+    renderedSpecimenDataUrl?: string;
+  };
+  download: {
+    status: 'direct_files' | 'official_page_only' | 'unavailable';
+    message: string;
+    options: FontDownloadOption[];
+  };
+  metricsSummary?: {
+    silhouetteIoU?: number;
+    edgeCorrelation?: number;
+    aspectMatch?: number;
+    glyphCoverage?: number;
+  };
+}
+
+export interface FontResearchResult {
+  uploadId: string;
+  regionId: string;
+  searchedText: string;
+  outcome: 'verified_exact' | 'not_found';
+  verifiedMatch: VerifiedExactFontMatch | null;
+  notFoundHeading?: string;
+  notFoundMessage?: string;
+  researchSummary: string;
+  glyphAnalysis: GlyphAnatomyAnalysis;
+  sourcesInvestigated: FontSourceHealth[];
+  candidatesEvaluatedCount: number;
+  processingMs: number;
+}
+
 export interface PendingFontDesign {
   fontId: string;
   family: string;
@@ -486,4 +624,5 @@ export interface PendingFontDesign {
   woff2Url?: string;
   ttfUrl?: string;
 }
+
 

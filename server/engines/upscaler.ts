@@ -23,7 +23,8 @@ export async function upscaleImage(
   onStage?.('Loading AI Model', 1, 12);
 
   // Check if an external Real-ESRGAN Cloud Run worker is configured
-  const workerUrl = process.env.PROCESSING_WORKER_URL?.trim();
+  const workerUrl = (process.env.PROCESSING_WORKER_URL || '').trim();
+  const workerSecret = (process.env.PROCESSING_WORKER_SECRET || '').trim();
   if (workerUrl) {
     try {
       onStage?.('Analyzing Image', 2, 28);
@@ -31,10 +32,10 @@ export async function upscaleImage(
       form.append('file', new Blob([new Uint8Array(inputBuffer)]), 'input.png');
       form.append('options', JSON.stringify(options));
 
-      const workerRes = await fetch(`${workerUrl.replace(/\/$/, '')}/upscale`, {
+      const workerRes = await fetch(`${workerUrl.replace(/\/$/, '')}/upscale`.trim(), {
         method: 'POST',
-        headers: process.env.PROCESSING_WORKER_SECRET
-          ? { Authorization: `Bearer ${process.env.PROCESSING_WORKER_SECRET}` }
+        headers: workerSecret
+          ? { Authorization: `Bearer ${workerSecret}` }
           : undefined,
         body: form,
       });

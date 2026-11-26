@@ -25,16 +25,17 @@ import { analyzeImageWithGemini } from './server/engines/geminiAnalyzer.ts';
 import {
   buildVerifiedFontDownload,
   convertFontTextToVectorShapes,
-  runFontFinderPipeline,
+  runExactFontResearch,
+  runFontRegionDetection,
 } from './server/engines/fontFinder.ts';
 import {
   DEFAULT_BG_REMOVE_OPTIONS,
   DEFAULT_UPSCALE_OPTIONS,
   DEFAULT_VECTORIZE_OPTIONS,
   type BackgroundRemoveOptions,
+  type DetectedTextRegion,
   type ExportOptions,
   type FontCropRect,
-  type FontSearchFilters,
   type ProcessingJobState,
   type UpscaleOptions,
   type VectorDocument,
@@ -49,6 +50,20 @@ const TTL_MS = 1000 * 60 * 60 * 4; // 4 hours temp file lifetime
 
 if (!fs.existsSync(TMP_DIR)) {
   fs.mkdirSync(TMP_DIR, { recursive: true });
+} else {
+  // Clean up orphaned temporary uploads left over from previous server runs
+  try {
+    for (const entry of fs.readdirSync(TMP_DIR)) {
+      const target = path.join(TMP_DIR, entry);
+      try {
+        if (fs.statSync(target).isFile()) fs.unlinkSync(target);
+      } catch {
+        // ignore
+      }
+    }
+  } catch {
+    // ignore
+  }
 }
 
 interface StoredUpload {
@@ -206,7 +221,7 @@ async function createServer() {
         // ignore invalid origin
       }
     }
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
     if (req.method === 'OPTIONS') {
       res.status(204).end();
@@ -229,9 +244,9 @@ async function createServer() {
 
   // Health & Engine Status Endpoint
   app.get('/api/health', (_req, res) => {
-    const workerUrl = process.env.PROCESSING_WORKER_URL?.trim();
-    const hasGemini =
-      Boolean(process.env.GEMINI_API_KEY) && process.env.GEMINI_API_KEY !== 'MY_GEMINI_API_KEY';
+    const workerUrl = (process.env.PROCESSING_WORKER_URL || '').trim();
+    const geminiKey = (process.env.GEMINI_API_KEY || '').trim();
+    const hasGemini = Boolean(geminiKey) && geminiKey !== 'MY_GEMINI_API_KEY';
 
     res.json({
       status: 'ok',
@@ -261,15 +276,45 @@ async function createServer() {
         },
         aiAnalyzer: {
           available: hasGemini,
-          model: 'gemini-4-hydrogen',
         },
         fontFinder: {
           available: hasGemini,
-          sources: ['Google Fonts Metadata API', 'Fontsource v1 Registry'],
-          model: 'gemini-4-hydrogen',
+          sources: [
+            'Google Fonts Catalog',
+            'Fontsource Registry',
+            'Official Foundries & Specimen Databases',
+          ],
         },
       },
     });
+  });
+
+  // Delete Temporary Upload cleanly
+  app.delete('/api/upload/:uploadId', async (req, res) => {
+    try {
+      const caller = await verifyOptionalFirebaseAuth(req.headers.authorization);
+      const uploadId = String(req.params.uploadId || '').trim();
+      if (!isValidSafeId(uploadId)) {
+        res.status(400).json({ error: 'Invalid upload identifier.' });
+        return;
+      }
+      const up = uploadsStore.get(uploadId);
+      if (up) {
+        if (up.ownerUid && up.ownerUid !== caller?.uid) {
+          res.status(403).json({ error: 'Unauthorized removal of uploaded asset.' });
+          return;
+        }
+        try {
+          if (fs.existsSync(up.filePath)) fs.unlinkSync(up.filePath);
+        } catch {
+          // ignore
+        }
+        uploadsStore.delete(uploadId);
+      }
+      res.json({ deleted: true, uploadId });
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : 'Unable to remove upload.' });
+    }
   });
 
   // Upload Raster Image
@@ -588,28 +633,28 @@ async function createServer() {
     }
   });
 
-  // Start AI Font Finder Analysis Job (8-stage pipeline)
-  app.post('/api/font-finder/analyze', async (req, res) => {
+  // Phase A: Automatic Multi-Region Image Typography Detection
+  app.post('/api/font-finder/detect', async (req, res) => {
     try {
       const caller = await verifyOptionalFirebaseAuth(req.headers.authorization);
-      const uploadId = String(req.body?.uploadId || '');
+      const uploadId = String(req.body?.uploadId || '').trim();
       const up = assertUploadAccess(uploadId, caller?.uid || null);
       const crop = (req.body?.crop || null) as FontCropRect | null;
-      const filters = (req.body?.filters || {}) as FontSearchFilters;
+      const customHint = typeof req.body?.customHint === 'string' ? req.body.customHint.slice(0, 300) : '';
 
       const jobId = generateSecureId('job');
       const job: StoredJob = {
         jobId,
         ownerUid: caller?.uid || null,
         uploadId,
-        jobType: 'font-finder',
+        jobType: 'font-detect',
         status: 'processing',
-        stage: 'Uploading Image',
+        stage: 'Analyzing uploaded image...',
         stageIndex: 1,
-        totalStages: 8,
-        progress: 8,
+        totalStages: 3,
+        progress: 12,
         isEstimate: false,
-        engine: 'Gemini 4 Typography Agent + Google Fonts & Fontsource',
+        engine: 'Typography Detection & Segmentation Pipeline',
         cancelled: false,
         createdAt: Date.now(),
       };
@@ -619,11 +664,11 @@ async function createServer() {
         try {
           if (job.cancelled) return;
           const imgBuf = fs.readFileSync(up.filePath);
-          const result = await runFontFinderPipeline({
+          const result = await runFontRegionDetection({
             imageBuffer: imgBuf,
             uploadId,
             crop,
-            filters,
+            customHint,
             onProgress: (stage, stageIndex, progress) => {
               if (!job.cancelled) {
                 job.stage = stage;
@@ -635,17 +680,17 @@ async function createServer() {
           if (job.cancelled) return;
 
           job.status = 'completed';
-          job.stage = 'Preparing Results';
-          job.stageIndex = 8;
+          job.stage = 'Completed';
+          job.stageIndex = 3;
           job.progress = 100;
           job.result = {
             processingMs: result.processingMs,
-            fontFinderResult: result,
+            fontDetectionResult: result,
           };
         } catch (err) {
           job.status = 'failed';
           job.stage = 'Failed';
-          job.error = err instanceof Error ? err.message : 'AI Font Finder analysis failed.';
+          job.error = err instanceof Error ? err.message : 'Typography detection failed.';
         }
       });
 
@@ -653,7 +698,86 @@ async function createServer() {
     } catch (err) {
       res
         .status(400)
-        .json({ error: err instanceof Error ? err.message : 'Unable to start AI Font Finder.' });
+        .json({ error: err instanceof Error ? err.message : 'Unable to start typography detection.' });
+    }
+  });
+
+  // Phase B: Deep Single-Region Exact Original Font Research & Verification
+  app.post('/api/font-finder/research', async (req, res) => {
+    try {
+      const caller = await verifyOptionalFirebaseAuth(req.headers.authorization);
+      const uploadId = String(req.body?.uploadId || '').trim();
+      const up = assertUploadAccess(uploadId, caller?.uid || null);
+      const region = req.body?.region as DetectedTextRegion | undefined;
+      const crop = (req.body?.crop || null) as FontCropRect | null;
+      const extractedTextOverride =
+        typeof req.body?.extractedTextOverride === 'string'
+          ? req.body.extractedTextOverride.slice(0, 400)
+          : undefined;
+
+      if (!region || !region.regionId || !region.bbox || !region.extractedText) {
+        res.status(400).json({ error: 'A valid selected text region is required.' });
+        return;
+      }
+
+      const jobId = generateSecureId('job');
+      const job: StoredJob = {
+        jobId,
+        ownerUid: caller?.uid || null,
+        uploadId,
+        jobType: 'font-research',
+        status: 'processing',
+        stage: 'Analyzing selected letterforms...',
+        stageIndex: 1,
+        totalStages: 6,
+        progress: 12,
+        isEstimate: false,
+        engine: 'Exact Font Research & Specimen Verification Pipeline',
+        cancelled: false,
+        createdAt: Date.now(),
+      };
+      jobsStore.set(jobId, job);
+
+      setImmediate(async () => {
+        try {
+          if (job.cancelled) return;
+          const imgBuf = fs.readFileSync(up.filePath);
+          const result = await runExactFontResearch({
+            imageBuffer: imgBuf,
+            uploadId,
+            region,
+            crop,
+            extractedTextOverride,
+            onProgress: (stage, stageIndex, progress) => {
+              if (!job.cancelled) {
+                job.stage = stage;
+                job.stageIndex = stageIndex;
+                job.progress = progress;
+              }
+            },
+          });
+          if (job.cancelled) return;
+
+          job.status = 'completed';
+          job.stage = 'Preparing verified result...';
+          job.stageIndex = 6;
+          job.progress = 100;
+          job.result = {
+            processingMs: result.processingMs,
+            fontResearchResult: result,
+          };
+        } catch (err) {
+          job.status = 'failed';
+          job.stage = 'Failed';
+          job.error = err instanceof Error ? err.message : 'Exact font research failed.';
+        }
+      });
+
+      res.status(202).json({ jobId });
+    } catch (err) {
+      res
+        .status(400)
+        .json({ error: err instanceof Error ? err.message : 'Unable to start exact font search.' });
     }
   });
 
@@ -661,6 +785,7 @@ async function createServer() {
   app.get('/api/font-finder/download', async (req, res) => {
     try {
       const fontId = String(req.query.id || '').trim().toLowerCase();
+      const family = typeof req.query.family === 'string' ? req.query.family.trim().slice(0, 120) : undefined;
       const format = String(req.query.format || 'zip').trim().toLowerCase();
       const weight = Number(req.query.weight || 400);
       const style = String(req.query.style || 'normal').trim().toLowerCase();
@@ -669,14 +794,15 @@ async function createServer() {
         res.status(400).json({ error: 'Invalid font identifier.' });
         return;
       }
-      if (!['zip', 'ttf', 'woff2', 'woff'].includes(format)) {
+      if (!['zip', 'otf', 'ttf', 'woff2', 'woff'].includes(format)) {
         res.status(400).json({ error: 'Unsupported font download format.' });
         return;
       }
 
       const fileData = await buildVerifiedFontDownload({
         fontId,
-        format: format as 'zip' | 'ttf' | 'woff2' | 'woff',
+        family,
+        format: format as 'zip' | 'otf' | 'ttf' | 'woff2' | 'woff',
         weight: Number.isFinite(weight) ? weight : 400,
         style,
       });
@@ -696,6 +822,7 @@ async function createServer() {
   app.post('/api/font-finder/outline', async (req, res) => {
     try {
       const fontId = String(req.body?.fontId || '').trim().toLowerCase();
+      const family = typeof req.body?.family === 'string' ? req.body.family.trim().slice(0, 120) : undefined;
       const text = String(req.body?.text || '').trim();
       if (!/^[a-z0-9_-]{1,100}$/.test(fontId) || !text) {
         res.status(400).json({ error: 'Valid fontId and text are required.' });
@@ -703,6 +830,7 @@ async function createServer() {
       }
       const shape = await convertFontTextToVectorShapes({
         fontId,
+        family,
         text,
         fontSize: Number(req.body?.fontSize || 64),
         weight: Number(req.body?.weight || 400),

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { FontCandidateMatch } from '../types/vector.ts';
+import type { FontCandidateMatch, VerifiedExactFontMatch } from '../types/vector.ts';
 
 export type FontLoadStatus = 'idle' | 'loading' | 'loaded' | 'error';
 
@@ -12,41 +12,77 @@ export function buildLoadedFamilyAlias(fontId: string, weight: number, isItalic:
   return `MVF_${safe}_${weight}_${isItalic ? 'i' : 'n'}`;
 }
 
-export async function loadCandidateWebfont(
-  candidate: Pick<
-    FontCandidateMatch,
-    'id' | 'family' | 'recommendedWeight' | 'previewFontUrls' | 'cssUrl' | 'matchType'
-  >,
+export interface LoadableWebfontTarget {
+  id: string;
+  family: string;
+  weight: number;
+  cssUrl: string;
+  previewFontUrls: {
+    woff2?: string;
+    woff?: string;
+    ttf?: string;
+    otf?: string;
+  };
+  unavailable: boolean;
+}
+
+function normalizeLoadableTarget(
+  input: FontCandidateMatch | VerifiedExactFontMatch
+): LoadableWebfontTarget {
+  if ('specimenPreview' in input) {
+    return {
+      id: input.id,
+      family: input.family,
+      weight: input.weight || 400,
+      cssUrl: input.specimenPreview.cssUrl,
+      previewFontUrls: input.specimenPreview.previewFontUrls || {},
+      unavailable: !input.specimenPreview.available,
+    };
+  }
+  return {
+    id: input.id,
+    family: input.family,
+    weight: input.recommendedWeight || 400,
+    cssUrl: input.cssUrl,
+    previewFontUrls: input.previewFontUrls || {},
+    unavailable: input.matchType === 'exact-paid',
+  };
+}
+
+export async function loadWebfontTarget(
+  target: LoadableWebfontTarget,
   weightOverride?: number,
   isItalic = false
 ): Promise<{ cssFamily: string; status: FontLoadStatus }> {
-  if (candidate.matchType === 'exact-paid') {
-    return { cssFamily: `"${candidate.family}", sans-serif`, status: 'error' };
+  if (target.unavailable) {
+    return { cssFamily: 'inherit', status: 'error' };
   }
 
-  const w = weightOverride || candidate.recommendedWeight || 400;
-  const alias = buildLoadedFamilyAlias(candidate.id, w, isItalic);
+  const w = weightOverride || target.weight || 400;
+  const alias = buildLoadedFamilyAlias(target.id, w, isItalic);
 
   const existing = loadedFontsCache.get(alias);
   if (existing === 'loaded') {
-    return { cssFamily: `"${alias}", "${candidate.family}", sans-serif`, status: 'loaded' };
+    return { cssFamily: `"${alias}"`, status: 'loaded' };
   }
 
   if (pendingLoads.has(alias)) {
     const st = await pendingLoads.get(alias)!;
     return {
-      cssFamily: st === 'loaded' ? `"${alias}", "${candidate.family}", sans-serif` : `"${candidate.family}", sans-serif`,
+      cssFamily: st === 'loaded' ? `"${alias}"` : 'inherit',
       status: st,
     };
   }
 
   const task = (async (): Promise<FontLoadStatus> => {
     try {
-      // 1. Prefer verified binary WOFF2 / TTF / WOFF via FontFace API so browser renders authentic font glyphs
-      const binaryUrl =
-        candidate.previewFontUrls?.woff2 ||
-        candidate.previewFontUrls?.ttf ||
-        candidate.previewFontUrls?.woff;
+      const binaryUrl = (
+        target.previewFontUrls?.woff2 ||
+        target.previewFontUrls?.ttf ||
+        target.previewFontUrls?.woff ||
+        target.previewFontUrls?.otf ||
+        ''
+      ).trim();
 
       if (binaryUrl && typeof FontFace !== 'undefined') {
         const face = new FontFace(alias, `url("${binaryUrl}")`, {
@@ -60,18 +96,18 @@ export async function loadCandidateWebfont(
         return 'loaded';
       }
 
-      // 2. Fallback to Google Fonts official CSS2 stylesheet if direct binary URL wasn't present
-      if (candidate.cssUrl && !injectedStylesheets.has(candidate.cssUrl)) {
+      const cssUrl = (target.cssUrl || '').trim();
+      if (cssUrl && !injectedStylesheets.has(cssUrl)) {
         await new Promise<void>((resolve, reject) => {
           const link = document.createElement('link');
           link.rel = 'stylesheet';
-          link.href = candidate.cssUrl;
+          link.href = cssUrl;
           link.onload = () => resolve();
           link.onerror = () => reject(new Error('Stylesheet load failed'));
           document.head.appendChild(link);
-          injectedStylesheets.add(candidate.cssUrl);
+          injectedStylesheets.add(cssUrl);
         });
-        await document.fonts.load(`${isItalic ? 'italic' : 'normal'} ${w} 24px "${candidate.family}"`);
+        await document.fonts.load(`${isItalic ? 'italic' : 'normal'} ${w} 24px "${target.family}"`);
         loadedFontsCache.set(alias, 'loaded');
         return 'loaded';
       }
@@ -89,39 +125,61 @@ export async function loadCandidateWebfont(
   pendingLoads.set(alias, task);
   const st = await task;
   return {
-    cssFamily: st === 'loaded' ? `"${alias}", "${candidate.family}", sans-serif` : `"${candidate.family}", sans-serif`,
+    cssFamily: st === 'loaded' ? `"${alias}"` : 'inherit',
     status: st,
   };
 }
 
+export async function loadCandidateWebfont(
+  candidate: FontCandidateMatch | VerifiedExactFontMatch,
+  weightOverride?: number,
+  isItalic = false
+): Promise<{ cssFamily: string; status: FontLoadStatus }> {
+  return loadWebfontTarget(normalizeLoadableTarget(candidate), weightOverride, isItalic);
+}
+
 export function useCandidateWebfont(
-  candidate: FontCandidateMatch | null,
+  candidate: FontCandidateMatch | VerifiedExactFontMatch | null,
   weight?: number,
   isItalic = false
 ): { cssFamily: string; status: FontLoadStatus } {
+  const target = candidate ? normalizeLoadableTarget(candidate) : null;
+
   const [state, setState] = useState<{ cssFamily: string; status: FontLoadStatus }>(() => ({
-    cssFamily: candidate ? `"${candidate.family}", sans-serif` : 'sans-serif',
-    status: candidate?.matchType === 'exact-paid' ? 'error' : 'loading',
+    cssFamily: 'inherit',
+    status: !target ? 'idle' : target.unavailable ? 'error' : 'loading',
   }));
 
   useEffect(() => {
-    if (!candidate) return;
-    if (candidate.matchType === 'exact-paid') {
-      setState({ cssFamily: `"${candidate.family}", sans-serif`, status: 'error' });
+    if (!target) {
+      setState({ cssFamily: 'inherit', status: 'idle' });
+      return;
+    }
+    if (target.unavailable) {
+      setState({ cssFamily: 'inherit', status: 'error' });
       return;
     }
 
     let cancelled = false;
     setState((prev) => ({ ...prev, status: 'loading' }));
 
-    loadCandidateWebfont(candidate, weight, isItalic).then((res) => {
+    loadWebfontTarget(target, weight, isItalic).then((res) => {
       if (!cancelled) setState(res);
     });
 
     return () => {
       cancelled = true;
     };
-  }, [candidate?.id, candidate?.recommendedWeight, candidate?.previewFontUrls?.woff2, candidate?.cssUrl, weight, isItalic]);
+  }, [
+    target?.id,
+    target?.weight,
+    target?.previewFontUrls?.woff2,
+    target?.previewFontUrls?.ttf,
+    target?.cssUrl,
+    target?.unavailable,
+    weight,
+    isItalic,
+  ]);
 
   return state;
 }

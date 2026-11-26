@@ -34,17 +34,18 @@ export async function removeBackground(
   onStage?.('Analyzing Image', 1, 18);
 
   // Check if an external RMBG Cloud Run worker is configured
-  const workerUrl = process.env.PROCESSING_WORKER_URL?.trim();
+  const workerUrl = (process.env.PROCESSING_WORKER_URL || '').trim();
+  const workerSecret = (process.env.PROCESSING_WORKER_SECRET || '').trim();
   if (workerUrl && (!options.fgSeeds || options.fgSeeds.length === 0) && (!options.bgSeeds || options.bgSeeds.length === 0)) {
     try {
       const form = new FormData();
       form.append('file', new Blob([new Uint8Array(inputBuffer)]), 'input.png');
       form.append('options', JSON.stringify(options));
 
-      const workerRes = await fetch(`${workerUrl.replace(/\/$/, '')}/remove-background`, {
+      const workerRes = await fetch(`${workerUrl.replace(/\/$/, '')}/remove-background`.trim(), {
         method: 'POST',
-        headers: process.env.PROCESSING_WORKER_SECRET
-          ? { Authorization: `Bearer ${process.env.PROCESSING_WORKER_SECRET}` }
+        headers: workerSecret
+          ? { Authorization: `Bearer ${workerSecret}` }
           : undefined,
         body: form,
       });

@@ -1,128 +1,56 @@
 import React, { useState } from 'react';
-import { Columns2, Download, Layers, X, ZoomIn, ZoomOut } from 'lucide-react';
+import { Columns2, Download, ExternalLink, Info, Layers, X, ZoomIn, ZoomOut } from 'lucide-react';
 import { useCandidateWebfont } from '../lib/fontLoader.ts';
 import type {
-  FontCandidateMatch,
+  DetectedTextRegion,
   FontDownloadOption,
-  TextRegionDetection,
+  VerifiedExactFontMatch,
 } from '../types/vector.ts';
-import { applyTextCaseMode, type LivePreviewStyleConfig } from './FontResultCard.tsx';
-
-interface CandidatePreviewPaneProps {
-  candidate: FontCandidateMatch;
-  region: TextRegionDetection;
-  previewConfig: LivePreviewStyleConfig;
-  zoom: number;
-  onUseInDesign: (candidate: FontCandidateMatch, weight: number, sampleText: string) => void;
-  onDownloadOption: (candidate: FontCandidateMatch, option: FontDownloadOption) => Promise<void>;
-}
-
-const CandidatePreviewPane: React.FC<CandidatePreviewPaneProps> = ({
-  candidate,
-  region,
-  previewConfig,
-  zoom,
-  onUseInDesign,
-  onDownloadOption,
-}) => {
-  const isItalic = region.traits.isItalic && candidate.styles.includes('italic');
-  const { cssFamily, status } = useCandidateWebfont(
-    candidate,
-    candidate.recommendedWeight,
-    isItalic
-  );
-  const text = applyTextCaseMode(
-    region.extractedText,
-    previewConfig.customText,
-    previewConfig.caseTransform
-  );
-  const zipOpt = candidate.downloadFormats[0];
-
-  return (
-    <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
-      <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-slate-900">{candidate.family}</span>
-          <span className="font-mono font-semibold text-indigo-700">
-            {candidate.confidencePercent}%
-          </span>
-          <span className="text-slate-500">
-            · {status === 'loaded' ? 'Real font loaded' : candidate.matchType === 'exact-paid' ? 'Commercial reference' : 'Loading...'}
-          </span>
-        </div>
-        <div className="flex items-center gap-2">
-          {candidate.matchType !== 'exact-paid' && (
-            <button
-              type="button"
-              onClick={() =>
-                onUseInDesign(candidate, candidate.recommendedWeight, region.extractedText)
-              }
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 cursor-pointer"
-            >
-              <Layers className="w-3 h-3" />
-              Use in Design
-            </button>
-          )}
-          {zipOpt && (
-            <button
-              type="button"
-              onClick={() => onDownloadOption(candidate, zipOpt)}
-              className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 cursor-pointer"
-            >
-              <Download className="w-3 h-3" />
-              {zipOpt.format}
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div
-        className="p-6 min-h-[130px] flex items-center justify-center overflow-auto"
-        style={{ backgroundColor: previewConfig.bgColor }}
-      >
-        <div
-          style={{
-            fontFamily: cssFamily,
-            fontSize: `${Math.round(previewConfig.fontSize * zoom)}px`,
-            fontWeight: candidate.recommendedWeight || 400,
-            fontStyle: isItalic ? 'italic' : 'normal',
-            letterSpacing: `${previewConfig.letterSpacingEm}em`,
-            lineHeight: previewConfig.lineHeight,
-            color: previewConfig.textColor,
-            textAlign: previewConfig.align,
-            width: '100%',
-            wordBreak: 'break-word',
-          }}
-        >
-          {text}
-        </div>
-      </div>
-    </div>
-  );
-};
+import { applyTextCaseMode, type LivePreviewStyleConfig } from './ExactFontResultCard.tsx';
 
 interface FontCompareModalProps {
   open: boolean;
   onClose: () => void;
-  region: TextRegionDetection | null;
-  candidates: FontCandidateMatch[];
+  region: DetectedTextRegion | null;
+  verifiedMatch: VerifiedExactFontMatch | null;
+  searchedText: string;
   previewConfig: LivePreviewStyleConfig;
-  onUseInDesign: (candidate: FontCandidateMatch, weight: number, sampleText: string) => void;
-  onDownloadOption: (candidate: FontCandidateMatch, option: FontDownloadOption) => Promise<void>;
+  onUseInDesign?: (match: VerifiedExactFontMatch, sampleText: string) => void;
+  onDownloadOption: (match: VerifiedExactFontMatch, option: FontDownloadOption) => Promise<void>;
 }
 
 export const FontCompareModal: React.FC<FontCompareModalProps> = ({
   open,
   onClose,
   region,
-  candidates,
+  verifiedMatch,
+  searchedText,
   previewConfig,
   onUseInDesign,
   onDownloadOption,
 }) => {
   const [zoom, setZoom] = useState(1);
 
-  if (!open || !region || candidates.length === 0) return null;
+  const { cssFamily, status } = useCandidateWebfont(
+    open && verifiedMatch ? verifiedMatch : null,
+    verifiedMatch?.weight || 400,
+    verifiedMatch?.isItalic || false
+  );
+
+  if (!open || !region || !verifiedMatch) return null;
+
+  const displayText = applyTextCaseMode(
+    searchedText || region.extractedText,
+    previewConfig.customText,
+    previewConfig.caseTransform
+  );
+  const zipOpt = verifiedMatch.download.options[0];
+  const canConvertToVector = Boolean(
+    onUseInDesign &&
+      (verifiedMatch.specimenPreview.previewFontUrls.ttf ||
+        verifiedMatch.download.options.some((o) => o.format === 'TTF' || o.format === 'OTF') ||
+        /google fonts|fontsource/i.test(verifiedMatch.officialSourceName))
+  );
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs flex items-center justify-center p-4">
@@ -133,10 +61,10 @@ export const FontCompareModal: React.FC<FontCompareModalProps> = ({
             <Columns2 className="w-5 h-5 text-indigo-600" />
             <div>
               <h3 className="text-base font-bold text-slate-900">
-                Original vs Candidate Typography Comparison
+                Original Crop vs Verified Exact Font Comparison
               </h3>
               <p className="text-xs text-slate-500">
-                Extracted text: &ldquo;{region.extractedText}&rdquo; · {candidates.length} candidate{candidates.length > 1 ? 's' : ''}
+                {verifiedMatch.family} ({verifiedMatch.verifiedStyle}) · &ldquo;{searchedText || region.extractedText}&rdquo;
               </p>
             </div>
           </div>
@@ -172,11 +100,11 @@ export const FontCompareModal: React.FC<FontCompareModalProps> = ({
           </div>
         </div>
 
-        {/* Body: Left = Original Uploaded Text Crop, Right = Candidate Live Renders */}
+        {/* Body: Left = Original Cropped Typography, Right = Verified Specimen */}
         <div className="p-6 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-          <div className="lg:col-span-5 lg:sticky lg:top-0 space-y-3">
+          <div className="lg:col-span-5 space-y-3">
             <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Original Uploaded Typography
+              Original Uploaded Typography ({region.roleLabel})
             </div>
             <div className="border border-slate-200 rounded-xl bg-checkerboard p-5 flex items-center justify-center min-h-[220px] overflow-auto">
               <img
@@ -187,33 +115,121 @@ export const FontCompareModal: React.FC<FontCompareModalProps> = ({
                 className="max-w-full max-h-64 object-contain transition-transform"
               />
             </div>
+
             <div className="p-3.5 rounded-lg bg-slate-50 border border-slate-200 text-xs space-y-1.5">
-              <div className="font-semibold text-slate-900">AI Forensic Notes</div>
-              <div className="text-slate-600">{region.traits.reasoning}</div>
+              <div className="font-semibold text-slate-900">Glyph Anatomy Notes</div>
+              <div className="text-slate-600">{verifiedMatch.glyphComparisonNotes}</div>
               <div className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-slate-500 pt-1">
-                <span>Style: {region.traits.primaryStyle}</span>
-                <span>Weight: {region.traits.weightName}</span>
-                <span>Contrast: {region.traits.strokeContrast}</span>
-                <span>Corners: {region.traits.cornerStyle}</span>
+                <span>Classification: {region.appearance.primaryClassification}</span>
+                <span>Weight: {region.appearance.weightEstimate}</span>
+                <span>Contrast: {region.glyphAnalysis.strokeContrast}</span>
               </div>
             </div>
           </div>
 
           <div className="lg:col-span-7 space-y-4">
             <div className="text-xs font-bold text-slate-800 uppercase tracking-wider">
-              Candidate Font Live Render ({candidates.length})
+              Verified Exact Font Specimen
             </div>
-            {candidates.map((cand) => (
-              <CandidatePreviewPane
-                key={cand.id}
-                candidate={cand}
-                region={region}
-                previewConfig={previewConfig}
-                zoom={zoom}
-                onUseInDesign={onUseInDesign}
-                onDownloadOption={onDownloadOption}
-              />
-            ))}
+
+            <div className="border border-slate-200 rounded-xl bg-white overflow-hidden">
+              <div className="px-4 py-2.5 bg-slate-50 border-b border-slate-200 flex flex-wrap items-center justify-between gap-2 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-bold text-slate-900">{verifiedMatch.family}</span>
+                  <span className="text-slate-600">{verifiedMatch.verifiedStyle}</span>
+                  <span className="text-emerald-700 font-medium">
+                    ·{' '}
+                    {verifiedMatch.specimenPreview.available
+                      ? status === 'loaded'
+                        ? 'Authentic font loaded'
+                        : status === 'loading'
+                        ? 'Loading authentic font...'
+                        : 'Browser preview blocked'
+                      : 'Commercial reference'}
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {canConvertToVector && onUseInDesign && (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onUseInDesign(verifiedMatch, searchedText || region.extractedText)
+                      }
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-md hover:bg-indigo-100 cursor-pointer"
+                    >
+                      <Layers className="w-3 h-3" />
+                      Use in Design
+                    </button>
+                  )}
+                  {zipOpt ? (
+                    <button
+                      type="button"
+                      onClick={() => onDownloadOption(verifiedMatch, zipOpt)}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-white bg-indigo-600 rounded-md hover:bg-indigo-700 cursor-pointer"
+                    >
+                      <Download className="w-3 h-3" />
+                      {zipOpt.format}
+                    </button>
+                  ) : verifiedMatch.officialPageUrl ? (
+                    <a
+                      href={verifiedMatch.officialPageUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold text-white bg-slate-900 rounded-md hover:bg-slate-800"
+                    >
+                      Official Source
+                      <ExternalLink className="w-3 h-3" />
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+
+              {verifiedMatch.specimenPreview.available && status === 'loaded' ? (
+                <div
+                  className="p-6 min-h-[220px] flex items-center justify-center overflow-auto"
+                  style={{ backgroundColor: previewConfig.bgColor }}
+                >
+                  <div
+                    className="whitespace-pre-wrap"
+                    style={{
+                      fontFamily: cssFamily,
+                      fontSize: `${Math.round(previewConfig.fontSize * zoom)}px`,
+                      fontWeight: verifiedMatch.weight || 400,
+                      fontStyle: verifiedMatch.isItalic ? 'italic' : 'normal',
+                      letterSpacing: `${previewConfig.letterSpacingEm}em`,
+                      lineHeight: previewConfig.lineHeight,
+                      color: previewConfig.textColor,
+                      textAlign: previewConfig.align,
+                      width: '100%',
+                      wordBreak: 'break-word',
+                    }}
+                  >
+                    {displayText}
+                  </div>
+                </div>
+              ) : verifiedMatch.specimenPreview.renderedSpecimenDataUrl ? (
+                <div className="p-6 min-h-[220px] flex items-center justify-center overflow-auto bg-white">
+                  <img
+                    src={verifiedMatch.specimenPreview.renderedSpecimenDataUrl}
+                    alt={`Verified specimen render of ${verifiedMatch.family}`}
+                    referrerPolicy="no-referrer"
+                    style={{ transform: `scale(${zoom})`, transformOrigin: 'center center' }}
+                    className="max-w-full max-h-64 object-contain transition-transform"
+                  />
+                </div>
+              ) : (
+                <div className="p-6 min-h-[220px] flex items-center justify-center bg-slate-50 text-xs text-slate-600">
+                  <div className="flex items-start gap-2.5 max-w-md">
+                    <Info className="w-4 h-4 text-slate-500 shrink-0 mt-0.5" />
+                    <p>
+                      {verifiedMatch.specimenPreview.unavailableReason ||
+                        'Interactive webfont preview is unavailable for this commercial/proprietary font. System fallback fonts are never substituted.'}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

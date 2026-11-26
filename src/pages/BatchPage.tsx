@@ -20,6 +20,7 @@ import {
   uploadImageFile,
 } from '../lib/apiClient.ts';
 import { auth, verifyActiveAuthSession } from '../lib/firebase.ts';
+import { dataUrlToBlob } from '../lib/imageUtils.ts';
 import { AuthDownloadModal } from '../components/AuthDownloadModal.tsx';
 import {
   DEFAULT_BG_REMOVE_OPTIONS,
@@ -181,8 +182,7 @@ export const BatchPage: React.FC = () => {
       const blob = new Blob([item.resultSvg], { type: 'image/svg+xml' });
       triggerBrowserDownload(blob, `${base}.svg`);
     } else if (item.resultImageDataUrl) {
-      const res = await fetch(item.resultImageDataUrl);
-      const blob = await res.blob();
+      const blob = dataUrlToBlob(item.resultImageDataUrl, 'image/png');
       triggerBrowserDownload(blob, `${base}_processed.png`);
     }
   };

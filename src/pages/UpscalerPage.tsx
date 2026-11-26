@@ -9,6 +9,7 @@ import {
 } from '../lib/apiClient.ts';
 import { auth, verifyActiveAuthSession } from '../lib/firebase.ts';
 import { logDownloadRecord, saveUpscaleOrBgProjectToFirebase } from '../lib/firestoreService.ts';
+import { dataUrlToBlob } from '../lib/imageUtils.ts';
 import {
   DEFAULT_UPSCALE_OPTIONS,
   type ProcessingJobState,
@@ -170,8 +171,7 @@ export const UpscalerPage: React.FC<UpscalerPageProps> = ({
 
   const performDownloadResult = async () => {
     if (!result || !activeUpload) return;
-    const res = await fetch(result.imageDataUrl);
-    const blob = await res.blob();
+    const blob = dataUrlToBlob(result.imageDataUrl, result.mimeType || 'image/png');
     const base = activeUpload.filename.replace(/\.[^/.]+$/, '');
     const outName = `${base}_${options.scaleFactor}x.${options.outputFormat}`;
     triggerBrowserDownload(blob, outName);
