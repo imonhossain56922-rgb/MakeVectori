@@ -452,6 +452,94 @@ export function revokeSafePreviewUrl(url?: string | null): void {
   }
 }
 
+export function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Could not convert image blob to Data URL.'));
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read image data.'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+/**
+ * Downscales/compresses oversized browser images cleanly via Canvas when hitting a 4.5 MB
+ * serverless proxy body limit, returning a safe File under targetMaxBytes.
+ */
+export async function compressImageForProxyLimit(
+  file: File,
+  targetMaxBytes = 3_400_000
+): Promise<File> {
+  if (file.size <= targetMaxBytes) return file;
+  if (typeof document === 'undefined' || typeof URL === 'undefined') {
+    throw new Error('Image exceeds the 4.5 MB upload limit. Please resize it smaller and try again.');
+  }
+
+  let objectUrl: string | null = null;
+  try {
+    objectUrl = URL.createObjectURL(file);
+    const img = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const el = new Image();
+      const timer = setTimeout(() => reject(new Error('timeout')), 8000);
+      el.onload = () => {
+        clearTimeout(timer);
+        resolve(el);
+      };
+      el.onerror = () => {
+        clearTimeout(timer);
+        reject(new Error('decode_failed'));
+      };
+      el.src = objectUrl!;
+    });
+
+    const origW = img.naturalWidth || img.width;
+    const origH = img.naturalHeight || img.height;
+    if (origW < 4 || origH < 4) return file;
+
+    const attempts: Array<{ maxDim: number; mime: 'image/png' | 'image/jpeg'; quality: number }> = [
+      { maxDim: 2400, mime: 'image/jpeg', quality: 0.9 },
+      { maxDim: 1920, mime: 'image/jpeg', quality: 0.85 },
+      { maxDim: 1440, mime: 'image/jpeg', quality: 0.8 },
+    ];
+
+    for (const attempt of attempts) {
+      const scale = Math.min(1, attempt.maxDim / Math.max(origW, origH));
+      const w = Math.max(4, Math.round(origW * scale));
+      const h = Math.max(4, Math.round(origH * scale));
+
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) continue;
+      ctx.drawImage(img, 0, 0, w, h);
+
+      const outBlob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob((b) => resolve(b), attempt.mime, attempt.quality)
+      );
+      if (outBlob && outBlob.size > 0 && outBlob.size <= targetMaxBytes) {
+        const ext = attempt.mime === 'image/png' ? 'png' : 'jpg';
+        return buildSafeImageFile(outBlob, file.name, attempt.mime, ext);
+      }
+    }
+
+    throw new Error('Image exceeds the 4.5 MB serverless upload limit even after compression. Please upload a smaller image.');
+  } finally {
+    if (objectUrl) {
+      try {
+        URL.revokeObjectURL(objectUrl);
+      } catch {
+        // ignore
+      }
+    }
+  }
+}
+
 export interface ClipboardImageReadResult {
   file: File | null;
   errorMessage?: string;

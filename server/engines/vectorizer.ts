@@ -36,12 +36,18 @@ let potraceReadyPromise: Promise<PotraceFn> | null = null;
 function ensurePotraceReady(): Promise<PotraceFn> {
   if (!potraceReadyPromise) {
     potraceReadyPromise = (async () => {
+      const req = createRequire(import.meta.url);
       const g = globalThis as Record<string, unknown>;
       if (typeof g.require !== 'function') {
-        g.require = createRequire(import.meta.url);
+        g.require = req;
       }
       if (typeof g.__dirname !== 'string') {
-        g.__dirname = path.resolve(process.cwd(), 'node_modules/esm-potrace-wasm/dist');
+        try {
+          const pkgDir = path.dirname(req.resolve('esm-potrace-wasm/package.json'));
+          g.__dirname = path.join(pkgDir, 'dist');
+        } catch {
+          g.__dirname = path.resolve(process.cwd(), 'node_modules/esm-potrace-wasm/dist');
+        }
       }
       const mod = await import('esm-potrace-wasm');
       await mod.init();

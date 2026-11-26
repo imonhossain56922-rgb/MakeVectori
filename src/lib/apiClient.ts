@@ -1,7 +1,10 @@
 import { getDownloadURL, ref, uploadBytes } from 'firebase/storage';
 import { auth, storage } from './firebase.ts';
 import {
+  blobToDataUrl,
+  compressImageForProxyLimit,
   createSafePreviewUrl,
+  dataUrlToBlob,
   prepareUploadImageFile,
   trimToken,
   trimUrl,
@@ -21,6 +24,19 @@ import type {
 } from '../types/vector.ts';
 
 const PLACEHOLDER_HOST_PATTERN = /YOUR_CLOUD_RUN_WORKER_URL|MY_APP_URL|EXAMPLE_BACKEND_URL/i;
+
+// Client-side caches for seamless stateless Vercel Serverless compatibility
+interface CachedUploadSource {
+  file?: File;
+  sampleName?: 'emblem' | 'illustration' | 'watch';
+  filename?: string;
+  imageDataUrl?: string;
+  serverless?: boolean;
+}
+
+const clientUploadCache = new Map<string, CachedUploadSource>();
+const clientCompletedJobs = new Map<string, ProcessingJobState>();
+let detectedServerlessRuntime = false;
 
 function isLocalHostname(hostname: string): boolean {
   const lower = hostname.toLowerCase();
@@ -67,7 +83,6 @@ export function buildApiUrl(pathOrUrl: string): string {
     const base = getApiBaseUrl();
     const combined = `${base}${clean}`;
     if (base) {
-      // Validate combined URL
       try {
         return new URL(combined).toString();
       } catch {
@@ -132,7 +147,6 @@ async function safeFetch(
   const timeoutMs = opts.timeoutMs ?? 30_000;
   const context = opts.context ?? 'request';
 
-  // Build clean headers and NEVER manually set Content-Type when sending FormData
   const headers = new Headers(init.headers || undefined);
   if (init.body instanceof FormData) {
     headers.delete('Content-Type');
@@ -175,11 +189,11 @@ async function safeFetch(
     const rawMsg = err instanceof Error ? err.message : String(err || '');
     if (/pattern/i.test(rawMsg)) {
       throw new Error(
-        'Could not contact the processing endpoint due to an invalid URL or browser response format. Please verify VITE_API_BASE_URL.'
+        'Could not contact the processing endpoint due to an invalid URL or browser response format.'
       );
     }
     throw new Error(
-      'Network error: Unable to reach the image processing server. Check your internet connection or Vercel API configuration.'
+      'Network error: Unable to reach the image processing server. Please check your internet connection and try again.'
     );
   } finally {
     clearTimeout(timer);
@@ -207,13 +221,13 @@ function mapProxyOrHtmlError(status: number, context: string, bodySnippet: strin
 
   if (status === 413) {
     return new HttpResponseError(
-      'Image file is too large for the current upload endpoint (limit exceeded). Please resize under 4.5 MB or configure VITE_API_BASE_URL to your backend server.',
+      'Image file is too large for the current upload endpoint (limit exceeded).',
       413
     );
   }
   if (status === 404 || status === 405 || status === 502 || status === 503 || status === 504 || status === 200) {
     return new HttpResponseError(
-      `Processing API is unavailable or misconfigured on this deployment (HTTP ${status}). Configure VITE_API_BASE_URL in Vercel or update the /api rewrite in vercel.json.`,
+      `Processing API is unavailable or misconfigured on this deployment (HTTP ${status}).`,
       status
     );
   }
@@ -243,7 +257,7 @@ async function parseJsonResponseSafely<T>(res: Response, context: string): Promi
     throw new HttpResponseError(
       res.ok
         ? 'The processing server returned an empty response. Please try again.'
-        : `Server error (HTTP ${res.status}). Please check your backend configuration and try again.`,
+        : `Server error (HTTP ${res.status}). Please try again.`,
       res.status
     );
   }
@@ -302,8 +316,96 @@ async function parseErrorFromFailedResponse(res: Response, context: string, fall
   }
 }
 
+async function buildStatelessPayloadExtras(uploadId: string): Promise<Record<string, unknown>> {
+  const cached = clientUploadCache.get(uploadId);
+  if (!cached) return {};
+  if (cached.sampleName) {
+    return { sampleName: cached.sampleName, filename: cached.filename };
+  }
+  if (cached.imageDataUrl) {
+    return { imageDataUrl: cached.imageDataUrl, filename: cached.filename };
+  }
+  if (cached.file) {
+    const compact = await compressImageForProxyLimit(cached.file, 2_800_000).catch(() => cached.file!);
+    const dataUrl = await blobToDataUrl(compact);
+    cached.imageDataUrl = dataUrl;
+    return { imageDataUrl: dataUrl, filename: compact.name };
+  }
+  return {};
+}
+
+async function postJsonWithServerlessFallback<T>(
+  endpoint: string,
+  uploadId: string,
+  basePayload: Record<string, unknown>,
+  context: string,
+  timeoutMs = 55_000
+): Promise<T> {
+  const cleanId = trimToken(uploadId);
+  const headers = await getAuthHeaders();
+  const cached = clientUploadCache.get(cleanId);
+  const preferSync = detectedServerlessRuntime || Boolean(cached?.serverless);
+
+  const sendRequest = async (includeStatelessImage: boolean): Promise<T> => {
+    const extras = includeStatelessImage ? await buildStatelessPayloadExtras(cleanId) : {};
+    const res = await safeFetch(
+      endpoint,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({
+          ...basePayload,
+          uploadId: cleanId,
+          ...(preferSync || includeStatelessImage ? { sync: true } : {}),
+          ...extras,
+        }),
+      },
+      { timeoutMs, context }
+    );
+    return parseJsonResponseSafely<T>(res, context);
+  };
+
+  if (preferSync) {
+    return sendRequest(true);
+  }
+
+  try {
+    return await sendRequest(false);
+  } catch (err) {
+    if (
+      err instanceof Error &&
+      /expired or not found/i.test(err.message) &&
+      clientUploadCache.has(cleanId)
+    ) {
+      detectedServerlessRuntime = true;
+      return sendRequest(true);
+    }
+    throw err;
+  }
+}
+
+function handleImmediateJobResult(
+  raw: { jobId: string } & Partial<ProcessingJobState>,
+  sourceUploadId: string
+): string {
+  if (raw && raw.status === 'completed' && raw.jobId) {
+    clientCompletedJobs.set(raw.jobId, raw as ProcessingJobState);
+    // Also cache chained output uploadId (e.g. from Upscaler or BgRemover) for Vercel follow-ups
+    if (raw.result?.uploadId && raw.result?.imageDataUrl) {
+      const parent = clientUploadCache.get(sourceUploadId);
+      clientUploadCache.set(raw.result.uploadId, {
+        imageDataUrl: raw.result.imageDataUrl,
+        filename: parent?.filename || 'processed.png',
+        serverless: true,
+      });
+    }
+  }
+  return raw.jobId;
+}
+
 export async function fetchEngineHealth(): Promise<{
   status: string;
+  serverless?: boolean;
   maxUploadMb: number;
   engines: {
     vectorizer: { available: boolean; name: string; isExternalWorker: boolean };
@@ -314,15 +416,26 @@ export async function fetchEngineHealth(): Promise<{
   };
 }> {
   const res = await safeFetch('/api/health', { method: 'GET' }, { timeoutMs: 12_000, context: 'health' });
-  return parseJsonResponseSafely(res, 'health');
+  const data = await parseJsonResponseSafely<{
+    status: string;
+    serverless?: boolean;
+    maxUploadMb: number;
+    engines: {
+      vectorizer: { available: boolean; name: string; isExternalWorker: boolean };
+      upscaler: { available: boolean; name: string; isExternalWorker: boolean };
+      backgroundRemover: { available: boolean; name: string; isExternalWorker: boolean };
+      aiAnalyzer: { available: boolean };
+      fontFinder?: { available: boolean; sources: string[] };
+    };
+  }>(res, 'health');
+  if (data.serverless) detectedServerlessRuntime = true;
+  return data;
 }
 
 async function uploadViaFirebaseStorageFallback(safeFile: File): Promise<UploadMetadata> {
   const user = auth.currentUser;
   if (!user || !user.emailVerified) {
-    throw new Error(
-      'Image file exceeds the upload proxy limit (4.5 MB). Sign in with a verified account, resize below 4.5 MB, or set VITE_API_BASE_URL to your backend server.'
-    );
+    throw new Error('Verified sign-in required for direct cloud storage upload.');
   }
   const storagePath = `users/${user.uid}/uploads/${safeFile.name}`;
   const storageRef = ref(storage, storagePath);
@@ -346,39 +459,62 @@ async function uploadViaFirebaseStorageFallback(safeFile: File): Promise<UploadM
   return parseJsonResponseSafely<UploadMetadata>(res, 'upload-from-storage');
 }
 
+async function postMultipartUpload(targetFile: File, headers: Record<string, string>): Promise<UploadMetadata> {
+  const form = new FormData();
+  form.append('file', targetFile, targetFile.name);
+  const res = await safeFetch(
+    '/api/upload',
+    {
+      method: 'POST',
+      headers,
+      body: form,
+    },
+    { timeoutMs: 60_000, context: 'upload' }
+  );
+  return parseJsonResponseSafely<UploadMetadata>(res, 'upload');
+}
+
 export async function uploadImageFile(file: File | Blob): Promise<UploadMetadata> {
-  const safeFile = await prepareUploadImageFile(
+  let workingFile = await prepareUploadImageFile(
     file,
     file instanceof File ? file.name : 'uploaded_image',
     file.type
   );
 
   const headers = await getAuthHeaders();
-  const form = new FormData();
-  // Always pass sanitized unique ASCII filename explicitly
-  form.append('file', safeFile, safeFile.name);
-
   let data: UploadMetadata;
+
   try {
-    const res = await safeFetch(
-      '/api/upload',
-      {
-        method: 'POST',
-        headers,
-        body: form,
-      },
-      { timeoutMs: 60_000, context: 'upload' }
-    );
-    data = await parseJsonResponseSafely<UploadMetadata>(res, 'upload');
+    data = await postMultipartUpload(workingFile, headers);
   } catch (err) {
-    if (err instanceof HttpResponseError && err.status === 413 && auth.currentUser?.emailVerified) {
-      data = await uploadViaFirebaseStorageFallback(safeFile);
+    if (err instanceof HttpResponseError && err.status === 413) {
+      if (auth.currentUser?.emailVerified) {
+        try {
+          data = await uploadViaFirebaseStorageFallback(workingFile);
+        } catch {
+          workingFile = await compressImageForProxyLimit(workingFile, 3_400_000);
+          data = await postMultipartUpload(workingFile, headers);
+        }
+      } else {
+        workingFile = await compressImageForProxyLimit(workingFile, 3_400_000);
+        data = await postMultipartUpload(workingFile, headers);
+      }
     } else {
       throw err;
     }
   }
 
-  const localPreviewUrl = createSafePreviewUrl(safeFile);
+  if (data.serverless) {
+    detectedServerlessRuntime = true;
+  }
+
+  clientUploadCache.set(data.uploadId, {
+    file: workingFile,
+    filename: data.filename,
+    serverless: Boolean(data.serverless),
+  });
+
+  const localPreviewUrl = createSafePreviewUrl(workingFile);
   return {
     ...data,
     ...(localPreviewUrl ? { localPreviewUrl } : {}),
@@ -388,6 +524,7 @@ export async function uploadImageFile(file: File | Blob): Promise<UploadMetadata
 export async function removeUploadedImage(uploadId: string): Promise<void> {
   const cleanId = trimToken(uploadId);
   if (!cleanId) return;
+  clientUploadCache.delete(cleanId);
   const headers = await getAuthHeaders();
   await safeFetch(
     `/api/upload/${encodeURIComponent(cleanId)}`,
@@ -410,7 +547,16 @@ export async function loadSampleImage(sample: 'emblem' | 'illustration' | 'watch
     },
     { timeoutMs: 25_000, context: 'sample' }
   );
-  return parseJsonResponseSafely<UploadMetadata>(res, 'sample');
+  const data = await parseJsonResponseSafely<UploadMetadata>(res, 'sample');
+  if (data.serverless) {
+    detectedServerlessRuntime = true;
+  }
+  clientUploadCache.set(data.uploadId, {
+    sampleName: sample,
+    filename: data.filename,
+    serverless: Boolean(data.serverless),
+  });
+  return data;
 }
 
 export async function analyzeImageAi(uploadId: string): Promise<{
@@ -422,71 +568,52 @@ export async function analyzeImageAi(uploadId: string): Promise<{
   subjectSummary: string;
   aiPowered: boolean;
 }> {
-  const headers = await getAuthHeaders();
-  const res = await safeFetch(
-    '/api/analyze',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({ uploadId: trimToken(uploadId) }),
-    },
-    { timeoutMs: 35_000, context: 'analyze' }
-  );
-  return parseJsonResponseSafely(res, 'analyze');
+  return postJsonWithServerlessFallback('/api/analyze', uploadId, {}, 'analyze', 35_000);
 }
 
 export async function startVectorizeJob(
   uploadId: string,
   options: VectorizeOptions
 ): Promise<string> {
-  const headers = await getAuthHeaders();
-  const res = await safeFetch(
+  const cleanId = trimToken(uploadId);
+  const data = await postJsonWithServerlessFallback<{ jobId: string } & Partial<ProcessingJobState>>(
     '/api/vectorize',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({ uploadId: trimToken(uploadId), options }),
-    },
-    { timeoutMs: 30_000, context: 'vectorize' }
+    cleanId,
+    { options },
+    'vectorize',
+    58_000
   );
-  const data = await parseJsonResponseSafely<{ jobId: string }>(res, 'vectorize');
-  return data.jobId;
+  return handleImmediateJobResult(data, cleanId);
 }
 
 export async function startUpscaleJob(
   uploadId: string,
   options: UpscaleOptions
 ): Promise<string> {
-  const headers = await getAuthHeaders();
-  const res = await safeFetch(
+  const cleanId = trimToken(uploadId);
+  const data = await postJsonWithServerlessFallback<{ jobId: string } & Partial<ProcessingJobState>>(
     '/api/upscale',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({ uploadId: trimToken(uploadId), options }),
-    },
-    { timeoutMs: 30_000, context: 'upscale' }
+    cleanId,
+    { options },
+    'upscale',
+    58_000
   );
-  const data = await parseJsonResponseSafely<{ jobId: string }>(res, 'upscale');
-  return data.jobId;
+  return handleImmediateJobResult(data, cleanId);
 }
 
 export async function startBgRemoveJob(
   uploadId: string,
   options: BackgroundRemoveOptions
 ): Promise<string> {
-  const headers = await getAuthHeaders();
-  const res = await safeFetch(
+  const cleanId = trimToken(uploadId);
+  const data = await postJsonWithServerlessFallback<{ jobId: string } & Partial<ProcessingJobState>>(
     '/api/remove-background',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({ uploadId: trimToken(uploadId), options }),
-    },
-    { timeoutMs: 30_000, context: 'remove-background' }
+    cleanId,
+    { options },
+    'remove-background',
+    58_000
   );
-  const data = await parseJsonResponseSafely<{ jobId: string }>(res, 'remove-background');
-  return data.jobId;
+  return handleImmediateJobResult(data, cleanId);
 }
 
 export async function startFontDetectJob(
@@ -494,18 +621,15 @@ export async function startFontDetectJob(
   crop?: FontCropRect | null,
   customHint?: string
 ): Promise<string> {
-  const headers = await getAuthHeaders();
-  const res = await safeFetch(
+  const cleanId = trimToken(uploadId);
+  const data = await postJsonWithServerlessFallback<{ jobId: string } & Partial<ProcessingJobState>>(
     '/api/font-finder/detect',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({ uploadId: trimToken(uploadId), crop, customHint }),
-    },
-    { timeoutMs: 30_000, context: 'font-detect' }
+    cleanId,
+    { crop, customHint },
+    'font-detect',
+    58_000
   );
-  const data = await parseJsonResponseSafely<{ jobId: string }>(res, 'font-detect');
-  return data.jobId;
+  return handleImmediateJobResult(data, cleanId);
 }
 
 export async function startFontResearchJob(
@@ -514,23 +638,15 @@ export async function startFontResearchJob(
   extractedTextOverride?: string,
   crop?: FontCropRect | null
 ): Promise<string> {
-  const headers = await getAuthHeaders();
-  const res = await safeFetch(
+  const cleanId = trimToken(uploadId);
+  const data = await postJsonWithServerlessFallback<{ jobId: string } & Partial<ProcessingJobState>>(
     '/api/font-finder/research',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...headers },
-      body: JSON.stringify({
-        uploadId: trimToken(uploadId),
-        region,
-        extractedTextOverride,
-        crop,
-      }),
-    },
-    { timeoutMs: 30_000, context: 'font-research' }
+    cleanId,
+    { region, extractedTextOverride, crop },
+    'font-research',
+    58_000
   );
-  const data = await parseJsonResponseSafely<{ jobId: string }>(res, 'font-research');
-  return data.jobId;
+  return handleImmediateJobResult(data, cleanId);
 }
 
 export async function downloadVerifiedFontFile(
@@ -582,6 +698,15 @@ export async function pollJobUntilDone(
 ): Promise<ProcessingJobState> {
   const cleanJobId = trimToken(jobId);
   if (!cleanJobId) throw new Error('Invalid job identifier.');
+
+  // Immediate return for serverless synchronous completions
+  const cachedDone = clientCompletedJobs.get(cleanJobId);
+  if (cachedDone) {
+    clientCompletedJobs.delete(cleanJobId);
+    onProgress(cachedDone);
+    return cachedDone;
+  }
+
   const headers = await getAuthHeaders();
 
   while (true) {
@@ -621,6 +746,7 @@ export async function pollJobUntilDone(
 export async function cancelProcessingJob(jobId: string): Promise<void> {
   const cleanJobId = trimToken(jobId);
   if (!cleanJobId) return;
+  clientCompletedJobs.delete(cleanJobId);
   const headers = await getAuthHeaders();
   await safeFetch(
     `/api/jobs/${encodeURIComponent(cleanJobId)}/cancel`,
@@ -670,6 +796,8 @@ export async function downloadBatchZip(
 }
 
 export function triggerBrowserDownload(blob: Blob, filename: string): void {
+  // Keep dataUrlToBlob referenced if tree-shaker checks exports cleanly
+  void dataUrlToBlob;
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

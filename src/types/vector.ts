@@ -165,6 +165,7 @@ export interface UploadMetadata {
   previewDataUrl: string;
   localPreviewUrl?: string;
   dominantColors: string[];
+  serverless?: boolean;
 }
 
 export interface ProcessingJobState {
